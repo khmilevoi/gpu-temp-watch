@@ -7,8 +7,6 @@ pub struct Config {
     pub temperature_threshold_c: f32,
     pub poll_interval_sec: u64,
     pub base_cooldown_sec: u64,
-    pub lhm_api_url: String,
-    pub gpu_temp_patterns: Vec<String>,
     pub enable_logging: bool,
     pub log_file_path: Option<String>,
 }
@@ -19,13 +17,6 @@ impl Default for Config {
             temperature_threshold_c: 60.0,
             poll_interval_sec: 20,
             base_cooldown_sec: 20,
-            lhm_api_url: "http://127.0.0.1:8085/data.json".to_string(),
-            gpu_temp_patterns: vec![
-                "*GPU*Core*".to_string(),
-                "*GPU*Hot*".to_string(),
-                "*GPU*Junction*".to_string(),
-                "*Graphics*Core*".to_string(),
-            ],
             enable_logging: true,
             log_file_path: Some("./Logs/GpuTempWatch.log".to_string()),
         }

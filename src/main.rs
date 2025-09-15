@@ -1,34 +1,47 @@
 mod monitor;
 mod notifications;
 mod config;
+mod tray;
+mod logging;
 
 use monitor::{TempMonitor, GpuTempReading};
 use notifications::NotificationManager;
 use config::Config;
+use tray::{SystemTray, TrayMessage};
+use logging::FileLogger;
 
 use std::time::Duration;
 use tokio::time::sleep;
+use log::{info, error, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    env_logger::init();
+
     println!("🚀 GPU Temperature Monitor v0.1.0");
     println!("🔧 Initializing...");
 
     // Load configuration
-    let mut config = Config::load_or_create()?;
+    let config = Config::load_or_create()?;
     config.validate()?;
 
     // Initialize components
     let temp_monitor = TempMonitor::new();
     let mut notification_manager = NotificationManager::new();
+    let file_logger = FileLogger::new(&config)?;
+    let mut system_tray = SystemTray::new().map_err(|e| {
+        warn!("⚠️  Failed to create system tray: {}", e);
+        e
+    }).ok();
 
-    // Test LHM connection
-    println!("🔌 Testing LibreHardwareMonitor connection...");
+    // Test NVML connection
+    println!("🔌 Testing NVML connection...");
     match temp_monitor.test_connection().await {
-        Ok(_) => println!("✅ Connected to LibreHardwareMonitor"),
+        Ok(_) => println!("✅ Connected to NVML"),
         Err(e) => {
-            eprintln!("❌ Failed to connect to LibreHardwareMonitor: {}", e);
-            eprintln!("💡 Make sure LibreHardwareMonitor is running with web server enabled on port 8085");
+            eprintln!("❌ Failed to connect to NVML: {}", e);
+            eprintln!("💡 Make sure NVIDIA drivers are installed and GPU is available");
             return Err(e);
         }
     }
@@ -40,13 +53,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("⏱️  Poll interval: {}s", config.poll_interval_sec);
     println!("🔄 Starting monitoring loop...");
 
+    let mut monitoring_paused = false;
+
     // Main monitoring loop
     loop {
-        match monitor_temperatures(&temp_monitor, &mut notification_manager, &config).await {
-            Ok(_) => {},
-            Err(e) => {
-                eprintln!("❌ Monitoring error: {}", e);
-                // Continue monitoring despite errors
+        // Handle system tray messages
+        if let Some(ref tray) = system_tray {
+            if let Some(message) = tray.get_message() {
+                match message {
+                    TrayMessage::Exit => {
+                        println!("🚪 Exiting via system tray");
+                        return Ok(());
+                    }
+                    TrayMessage::Pause => {
+                        println!("⏸️ Monitoring paused");
+                        monitoring_paused = true;
+                    }
+                    TrayMessage::Resume => {
+                        println!("▶️ Monitoring resumed");
+                        monitoring_paused = false;
+                    }
+                    TrayMessage::Settings => {
+                        println!("⚙️ Settings clicked - opening config...");
+                        // TODO: Open config dialog
+                    }
+                    TrayMessage::ShowLogs => {
+                        println!("📋 Show logs clicked");
+                        // TODO: Open log file
+                    }
+                }
+            }
+        }
+
+        // Monitor temperatures if not paused
+        if !monitoring_paused {
+            match monitor_temperatures(&temp_monitor, &mut notification_manager, &config, &mut system_tray, &file_logger).await {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("❌ Monitoring error: {}", e);
+                    let _ = file_logger.log_error(&format!("Monitoring error: {}", e));
+                    // Continue monitoring despite errors
+                }
             }
         }
 
@@ -58,6 +105,8 @@ async fn monitor_temperatures(
     temp_monitor: &TempMonitor,
     notification_manager: &mut NotificationManager,
     config: &Config,
+    system_tray: &mut Option<SystemTray>,
+    file_logger: &FileLogger,
 ) -> Result<(), Box<dyn std::error::Error>> {
 
     let gpu_temps = temp_monitor.get_gpu_temperatures().await?;
@@ -86,10 +135,25 @@ async fn monitor_temperatures(
         // Log temperature reading
         let status_icon = if exceeds_threshold { "🔥" } else { "🟢" };
         println!("{} {}: {:.1}°C", status_icon, reading.sensor_name, temp);
+
+        // Log to file
+        let _ = file_logger.log_temperature_reading(&reading.sensor_name, temp, config.temperature_threshold_c);
+    }
+
+    // Update system tray icon based on temperature
+    if let Some(ref mut tray) = system_tray {
+        if let Err(e) = tray.update_icon_for_temperature(max_temp, config.temperature_threshold_c) {
+            warn!("⚠️  Failed to update tray icon: {}", e);
+        }
     }
 
     // Check if we should send notification
     if notification_manager.should_notify(any_over_threshold) {
+        let cooldown_level = notification_manager.cooldown_level;
+
+        // Log alert to file
+        let _ = file_logger.log_alert(&hottest_sensor, max_temp, config.temperature_threshold_c, cooldown_level);
+
         notification_manager.send_temperature_alert(
             &hottest_sensor,
             max_temp,

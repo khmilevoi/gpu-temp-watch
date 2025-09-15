@@ -1,9 +1,10 @@
-use winrt_notification::{Duration, Sound, Toast};
 use std::time::{SystemTime, UNIX_EPOCH};
+use winrt_notification::{Toast, Duration as ToastDuration};
+use log::{info, warn, error};
 
 pub struct NotificationManager {
     last_notification_time: Option<u64>,
-    cooldown_level: u32,
+    pub cooldown_level: u32,
     base_cooldown_sec: u64,
     max_cooldown_sec: u64,
 }
@@ -50,44 +51,57 @@ impl NotificationManager {
     }
 
     pub fn send_temperature_alert(&mut self, sensor_name: &str, temperature: f32, threshold: f32) -> Result<(), Box<dyn std::error::Error>> {
-        let title = "🔥 GPU Temperature Alert";
+        let title = "GPU Temperature Alert!";
         let message = format!(
             "{}: {:.1}°C (Threshold: {:.1}°C)",
             sensor_name, temperature, threshold
         );
 
+        // Console notification with visual alert
+        println!("🔥🔥🔥 TEMPERATURE ALERT 🔥🔥🔥");
+        println!("⚠️  {}", message);
+        println!("🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥");
+
         // Try to send Windows toast notification
-        match self.send_toast_notification(title, &message) {
+        match Toast::new("GPU Temperature Monitor")
+            .title(title)
+            .text1(&message)
+            .sound(None)
+            .duration(ToastDuration::Short)
+            .show()
+        {
             Ok(_) => {
-                println!("🔔 Toast notification sent: {}", message);
-                self.cooldown_level += 1;
-                Ok(())
+                info!("✅ Toast notification sent successfully");
             }
             Err(e) => {
-                // Fallback to console notification
-                println!("⚠️  TEMPERATURE ALERT: {}", message);
-                println!("📱 Toast notification failed: {}", e);
-                self.cooldown_level += 1;
-                Ok(())
+                warn!("⚠️  Failed to send toast notification: {}", e);
+                // Fall back to console only
             }
         }
-    }
 
-    fn send_toast_notification(&self, title: &str, message: &str) -> Result<(), Box<dyn std::error::Error>> {
-        Toast::new(Toast::POWERSHELL_APP_ID)
-            .title(title)
-            .text1(message)
-            .sound(Some(Sound::SMS))
-            .duration(Duration::Short)
-            .show()?;
+        self.cooldown_level += 1;
         Ok(())
     }
 
     pub fn send_status_notification(&self, message: &str) -> Result<(), Box<dyn std::error::Error>> {
-        match self.send_toast_notification("GPU Temperature Monitor", message) {
-            Ok(_) => println!("ℹ️  Status: {}", message),
-            Err(_) => println!("ℹ️  Status: {}", message),
+        println!("ℹ️  Status: {}", message);
+
+        // Try to send Windows toast notification for status updates
+        match Toast::new("GPU Temperature Monitor")
+            .title("Status Update")
+            .text1(message)
+            .sound(None)
+            .duration(ToastDuration::Short)
+            .show()
+        {
+            Ok(_) => {
+                info!("✅ Status toast notification sent");
+            }
+            Err(e) => {
+                warn!("⚠️  Failed to send status toast notification: {}", e);
+            }
         }
+
         Ok(())
     }
 }

@@ -10,7 +10,8 @@
       "Bash(dir:*)",
       "Bash(rustup-init.exe:*)",
       "Bash(rustc --version)",
-      "Bash(rustup toolchain:*)"
+      "Bash(rustup toolchain:*)",
+      "Bash(rustup:*)"
     ],
     "deny": [],
     "ask": []
