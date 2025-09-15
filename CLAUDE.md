@@ -124,3 +124,10 @@ Install-Module -Name BurntToast -Scope CurrentUser
 # Import manually if needed
 Import-Module BurntToast
 ```
+
+## Claude Code Environment
+This project was developed and tested with Claude Code running on:
+- **Model**: Sonnet 4 (claude-sonnet-4-20250514)
+- **Platform**: Windows (win32)
+- **Working Directory**: C:\Users\Khmil\Scripts\GpuTempWatch
+- **Date**: September 2025

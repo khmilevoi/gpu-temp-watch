@@ -42,6 +42,15 @@ function Write-Log([string]$msg) {
     "$ts $msg" | Out-File -FilePath $LogFile -Append -Encoding utf8
 }
 
+# Логирование запуска
+Write-Log "INFO: =========================================="
+Write-Log "INFO: GpuTempWatch-Tray.ps1 запущен"
+Write-Log "INFO: PowerShell версия: $($PSVersionTable.PSVersion)"
+Write-Log "INFO: Аргументы командной строки: $($MyInvocation.Line)"
+Write-Log "INFO: Родительский процесс: $(try { (Get-WmiObject Win32_Process -Filter "ProcessId=$PID").ParentProcessId } catch { 'Unknown' })"
+Write-Log "INFO: Пользователь: $env:USERNAME"
+Write-Log "INFO: Рабочая директория: $(Get-Location)"
+
 # Завершаем старые экземпляры
 $currentPID = $PID
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
@@ -259,9 +268,22 @@ function Show-SettingsDialog {
 }
 
 # Создание элементов трея и контекста приложения
-$applicationContext = New-Object System.Windows.Forms.ApplicationContext
-$notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Visible = $true
+Write-Log "INFO: Создание элементов системного трея..."
+
+try {
+    $applicationContext = New-Object System.Windows.Forms.ApplicationContext
+    Write-Log "INFO: ✓ ApplicationContext создан"
+
+    $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+    Write-Log "INFO: ✓ NotifyIcon создан"
+
+    $notifyIcon.Visible = $true
+    Write-Log "INFO: ✓ NotifyIcon установлен как видимый"
+} catch {
+    Write-Log "ERROR: Ошибка при создании элементов трея: $($_.Exception.Message)"
+    Write-Log "ERROR: StackTrace: $($_.Exception.StackTrace)"
+    throw
+}
 
 # Контекстное меню
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -379,19 +401,56 @@ $timer.Add_Tick({
 
 $timer.Start()
 
-# Скрываем консольное окно
+# Скрываем консольное окно - улучшенная версия
 Add-Type -Name Window -Namespace Console -MemberDefinition '
 [DllImport("Kernel32.dll")]
 public static extern IntPtr GetConsoleWindow();
 
 [DllImport("user32.dll")]
 public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+
+[DllImport("user32.dll")]
+public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+[DllImport("user32.dll")]
+public static extern bool IsWindowVisible(IntPtr hWnd);
 '
 
-$consolePtr = [Console.Window]::GetConsoleWindow()
-if ($consolePtr -ne [System.IntPtr]::Zero) {
-    [Console.Window]::ShowWindow($consolePtr, 0) # 0 = скрыть окно
+# Функция для надежного скрытия консоли
+function Hide-ConsoleWindow {
+    try {
+        $consolePtr = [Console.Window]::GetConsoleWindow()
+        if ($consolePtr -ne [System.IntPtr]::Zero) {
+            # Проверяем, видимо ли окно
+            $wasVisible = [Console.Window]::IsWindowVisible($consolePtr)
+            Write-Log "INFO: Консольное окно найдено (видимо: $wasVisible)"
+
+            # Пробуем скрыть окно несколькими способами
+            $result1 = [Console.Window]::ShowWindow($consolePtr, 0) # SW_HIDE
+            Start-Sleep -Milliseconds 100
+            $result2 = [Console.Window]::ShowWindow($consolePtr, 6) # SW_MINIMIZE
+            Start-Sleep -Milliseconds 100
+            $result3 = [Console.Window]::ShowWindow($consolePtr, 0) # SW_HIDE снова
+
+            # Проверяем результат
+            $isStillVisible = [Console.Window]::IsWindowVisible($consolePtr)
+            Write-Log "INFO: Скрытие консоли: результаты ($result1, $result2, $result3), видимо: $isStillVisible"
+
+            if (-not $isStillVisible) {
+                Write-Log "INFO: ✓ Консольное окно успешно скрыто"
+            } else {
+                Write-Log "WARN: ⚠ Консольное окно все еще видимо после попыток скрытия"
+            }
+        } else {
+            Write-Log "INFO: Консольное окно не найдено (уже скрыто или запущено без консоли)"
+        }
+    } catch {
+        Write-Log "ERROR: Ошибка при скрытии консоли: $($_.Exception.Message)"
+    }
 }
+
+# Скрываем консоль
+Hide-ConsoleWindow
 
 Write-Log "INFO: Системный трей запущен"
 
