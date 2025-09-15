@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wscript:*)"
+      "Bash(powershell:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "WebSearch",
+      "Bash(cargo:*)",
+      "WebFetch(domain:rustup.rs)",
+      "Bash(dir:*)",
+      "Bash(rustup-init.exe:*)",
+      "Bash(rustc --version)",
+      "Bash(rustup toolchain:*)"
     ],
     "deny": [],
     "ask": []
