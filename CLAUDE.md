@@ -4,25 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures using NVIDIA Management Library (NVML). The application provides real-time temperature monitoring with system tray integration, Windows toast notifications, and file logging.
+GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures using NVIDIA Management Library (NVML). The application provides real-time temperature monitoring with system tray integration, Windows toast notifications, web-based configuration interface, and comprehensive file logging.
 
 ## Architecture
 
 ### Core Components
 
 - **NVML Integration**: Direct communication with NVIDIA drivers via NVML for real-time GPU temperature readings
-- **System Tray**: Native Windows system tray icon with color-coded temperature status and context menu
-- **Toast Notifications**: Windows native toast notifications with smart cooldown logic
-- **File Logging**: Structured logging to `./Logs/GpuTempWatch.log` with timestamped entries
-- **Configuration**: JSON-based configuration with automatic defaults
+- **System Tray**: Native Windows system tray icon with dynamic color-coded temperature icons and context menu
+- **Web Interface**: Modern web-based configuration and monitoring interface on localhost:18235
+- **Toast Notifications**: Windows native toast notifications with smart exponential backoff cooldown
+- **File Logging**: Comprehensive structured logging to `./Logs/GpuTempWatch.log` with timestamped entries
+- **Autostart Management**: Automatic Windows startup integration via registry
+- **Configuration**: JSON-based configuration with real-time web updates
 
 ### Key Modules
 
-- `monitor.rs`: NVML wrapper for GPU temperature monitoring
-- `tray.rs`: System tray integration with temperature-based icon updates
-- `notifications.rs`: Windows toast notification system with exponential backoff
-- `logging.rs`: File logging with automatic directory creation
-- `config.rs`: JSON configuration management with validation
+- `monitor.rs`: NVML wrapper for GPU temperature monitoring with error handling
+- `tray.rs`: System tray integration with dynamic icon updates (cool/warm/hot states) and double-click support
+- `notifications.rs`: Windows toast notification system with exponential backoff (20s → 40s → 80s → 160s → 320s)
+- `logging.rs`: Comprehensive file logging with automatic directory creation and rotation
+- `config.rs`: JSON configuration management with validation and live updates
+- `web_server.rs`: HTTP server with REST API and WebSocket support for real-time monitoring
+- `autostart.rs`: Windows registry integration for startup management
+- `gui.rs`: Native Windows dialogs and file operations
 
 ### Configuration
 

@@ -1,7 +1,9 @@
-use trayicon::{TrayIcon, TrayIconBuilder, MenuBuilder};
-use std::sync::mpsc;
+use tray_icon::{TrayIcon, TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem}};
+use tray_icon::Icon;
 use std::error::Error;
-use log::{info, error, warn};
+use std::sync::mpsc;
+use log::{info, warn};
+use image::RgbaImage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayMessage {
@@ -15,99 +17,141 @@ pub enum TrayMessage {
     About,
     OpenConfig,
     OpenLogsFolder,
+    OpenWebInterface,
 }
 
 pub struct SystemTray {
-    _tray_icon: TrayIcon<TrayMessage>,
+    tray_icon: TrayIcon,
     receiver: mpsc::Receiver<TrayMessage>,
-    _icon_data: Vec<u8>, // Store icon data to ensure it lives long enough
+    current_icon_state: IconState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum IconState {
+    Cool,
+    Warm,
+    Hot,
 }
 
 impl SystemTray {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        // Build the tray menu with explicit activation
-        let tray_menu = MenuBuilder::new()
-            .item("🌡️ GPU Temperature Monitor", TrayMessage::About)
-            .separator()
-            .item("⏸️ Pause Monitoring", TrayMessage::Pause)
-            .item("▶️ Resume Monitoring", TrayMessage::Resume)
-            .separator()
-            .item("⚙️ Settings", TrayMessage::Settings)
-            .item("📋 Show Logs", TrayMessage::ShowLogs)
-            .item("📂 Open Config File", TrayMessage::OpenConfig)
-            .item("📁 Open Logs Folder", TrayMessage::OpenLogsFolder)
-            .separator()
-            .item("🔧 Install Autostart", TrayMessage::InstallAutostart)
-            .item("🗑️ Remove Autostart", TrayMessage::UninstallAutostart)
-            .separator()
-            .item("❌ Exit", TrayMessage::Exit);
+        println!("🔧 Creating new tray with proper event handler architecture...");
 
-        // Create callback function for tray clicks
-        let (callback_sender, callback_receiver) = mpsc::channel();
-        let callback = move |msg: &TrayMessage| {
-            println!("🖱️ Tray menu item clicked: {:?}", msg);
-            if let Err(e) = callback_sender.send(msg.clone()) {
-                eprintln!("❌ Failed to send tray message: {:?}", e);
-            }
-        };
+        // Create channel for tray events
+        let (sender, receiver) = mpsc::channel::<TrayMessage>();
 
-        // Try to load the thermometer icon from icons folder
-        let icon_data = if std::path::Path::new("icons/thermometer.ico").exists() {
-            match std::fs::read("icons/thermometer.ico") {
-                Ok(data) => {
-                    info!("✅ Loaded icons/thermometer.ico file");
-                    data
+        // Set up menu event handler using the recommended approach
+        let event_sender = sender.clone();
+        MenuEvent::set_event_handler(Some(Box::new(move |event: MenuEvent| {
+            println!("🖱️ Menu event received: {:?}", event);
+
+            // Convert menu event to TrayMessage without blocking operations
+            let tray_message = match event.id().0.as_str() {
+                "🌡️ GPU Temperature Monitor" => Some(TrayMessage::About),
+                "⏸️ Pause Monitoring" => Some(TrayMessage::Pause),
+                "▶️ Resume Monitoring" => Some(TrayMessage::Resume),
+                "⚙️ Settings" => Some(TrayMessage::OpenWebInterface),
+                "📋 Show Logs" => Some(TrayMessage::ShowLogs),
+                "📂 Open Config File" => Some(TrayMessage::OpenConfig),
+                "📁 Open Logs Folder" => Some(TrayMessage::OpenLogsFolder),
+                "🔧 Install Autostart" => Some(TrayMessage::InstallAutostart),
+                "🗑️ Remove Autostart" => Some(TrayMessage::UninstallAutostart),
+                "❌ Exit" => Some(TrayMessage::Exit),
+                _ => {
+                    println!("🤷 Unknown menu item: {}", event.id().0);
+                    None
                 }
-                Err(e) => {
-                    warn!("⚠️ Failed to read icons/thermometer.ico: {}, using embedded icon", e);
-                    Self::create_minimal_icon().to_vec()
+            };
+
+            // Send message to main thread without any blocking operations
+            if let Some(msg) = tray_message {
+                if let Err(e) = event_sender.send(msg) {
+                    eprintln!("❌ Failed to send tray message: {:?}", e);
                 }
             }
-        } else if std::path::Path::new("icons/icon.ico").exists() {
-            match std::fs::read("icons/icon.ico") {
-                Ok(data) => {
-                    info!("✅ Loaded icons/icon.ico file");
-                    data
+        })));
+
+        // Set up tray icon click handler for double-click
+        let click_sender = sender.clone();
+        use tray_icon::TrayIconEvent;
+        TrayIconEvent::set_event_handler(Some(Box::new(move |event: TrayIconEvent| {
+            match event {
+                TrayIconEvent::DoubleClick { .. } => {
+                    println!("🖱️ Double click detected on tray icon");
+                    if let Err(e) = click_sender.send(TrayMessage::OpenWebInterface) {
+                        eprintln!("❌ Failed to send double-click message: {:?}", e);
+                    }
                 }
-                Err(e) => {
-                    warn!("⚠️ Failed to read icons/icon.ico: {}, using embedded icon", e);
-                    Self::create_minimal_icon().to_vec()
-                }
+                _ => {}
             }
-        } else {
-            info!("ℹ️ No external icon file found in icons/ folder, using embedded icon");
-            Self::create_minimal_icon().to_vec()
-        };
+        })));
 
-        // Store icon data in a static location to satisfy lifetime requirements
-        let icon_bytes: &'static [u8] = Box::leak(icon_data.into_boxed_slice());
+        // Create menu
+        let menu = Menu::new();
 
-        // Create the tray icon with explicit settings
-        println!("🔧 Creating tray icon with menu...");
+        let about_item = MenuItem::new("🌡️ GPU Temperature Monitor", true, None);
+        let separator1 = PredefinedMenuItem::separator();
+        let pause_item = MenuItem::new("⏸️ Pause Monitoring", true, None);
+        let resume_item = MenuItem::new("▶️ Resume Monitoring", true, None);
+        let separator2 = PredefinedMenuItem::separator();
+        let settings_item = MenuItem::new("⚙️ Settings", true, None);
+        let logs_item = MenuItem::new("📋 Show Logs", true, None);
+        let config_item = MenuItem::new("📂 Open Config File", true, None);
+        let logs_folder_item = MenuItem::new("📁 Open Logs Folder", true, None);
+        let separator3 = PredefinedMenuItem::separator();
+        let autostart_install_item = MenuItem::new("🔧 Install Autostart", true, None);
+        let autostart_remove_item = MenuItem::new("🗑️ Remove Autostart", true, None);
+        let separator4 = PredefinedMenuItem::separator();
+        let exit_item = MenuItem::new("❌ Exit", true, None);
+
+        menu.append_items(&[
+            &about_item,
+            &separator1,
+            &pause_item,
+            &resume_item,
+            &separator2,
+            &settings_item,
+            &logs_item,
+            &config_item,
+            &logs_folder_item,
+            &separator3,
+            &autostart_install_item,
+            &autostart_remove_item,
+            &separator4,
+            &exit_item,
+        ])?;
+
+        // Load initial icon (cool state)
+        let icon = Self::load_icon_for_state(&IconState::Cool)?;
+
+        // Create tray icon
         let tray_icon = TrayIconBuilder::new()
-            .sender(callback)
-            .icon_from_buffer(icon_bytes)
-            .tooltip("GPU Temperature Monitor - Right click for menu")
-            .menu(tray_menu)
+            .with_menu(Box::new(menu))
+            .with_tooltip("GPU Temperature Monitor - Right click for menu, double click for settings")
+            .with_icon(icon)
             .build()?;
 
-        println!("🔧 Tray icon created successfully");
+        println!("🔧 Tray icon created with proper event handler");
 
-        info!("✅ System tray initialized");
+        info!("✅ System tray initialized with non-blocking event handler");
 
         Ok(SystemTray {
-            _tray_icon: tray_icon,
-            receiver: callback_receiver,
-            _icon_data: vec![], // We don't need to store it since it's leaked
+            tray_icon,
+            receiver,
+            current_icon_state: IconState::Cool,
         })
     }
 
     pub fn get_message(&self) -> Option<TrayMessage> {
+        // Use our own channel instead of MenuEvent::receiver()
         match self.receiver.try_recv() {
-            Ok(message) => Some(message),
+            Ok(message) => {
+                println!("📬 Received tray message: {:?}", message);
+                Some(message)
+            }
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
-                error!("❌ Tray message channel disconnected");
+                eprintln!("❌ Tray message channel disconnected");
                 None
             }
         }
@@ -115,53 +159,109 @@ impl SystemTray {
 
     pub fn update_icon_for_temperature(&mut self, temperature: f32, threshold: f32) -> Result<(), Box<dyn Error>> {
         // Determine which icon to use based on temperature
-        let icon_filename = if temperature > threshold {
-            "icons/thermometer-hot.ico"
+        let new_state = if temperature > threshold {
+            IconState::Hot
         } else if temperature > threshold - 10.0 {
-            "icons/thermometer-warm.ico"
+            IconState::Warm
         } else {
-            "icons/thermometer-cool.ico"
+            IconState::Cool
         };
 
-        // Log the temperature state
-        let state = if temperature > threshold {
-            "🔴 HOT"
-        } else if temperature > threshold - 10.0 {
-            "🟡 WARM"
-        } else {
-            "🟢 COOL"
-        };
+        // Only update icon if state changed
+        if new_state != self.current_icon_state {
+            let icon = Self::load_icon_for_state(&new_state)?;
+            self.tray_icon.set_icon(Some(icon))?;
+            self.current_icon_state = new_state.clone();
 
-        println!("🌡️  Temperature: {:.1}°C - State: {} (using {})", temperature, state, icon_filename);
+            let state_str = match new_state {
+                IconState::Hot => "🔴 HOT",
+                IconState::Warm => "🟡 WARM",
+                IconState::Cool => "🟢 COOL",
+            };
 
-        // Note: trayicon 0.3.0 may not support dynamic icon updates during runtime
-        // We would need to recreate the tray icon to change it, which is complex
-        // For now, we just log the desired state
-        info!("Icon should be: {}", icon_filename);
+            println!("🌡️ Temperature: {:.1}°C - State: {} (icon updated)", temperature, state_str);
+            info!("Tray icon updated to: {:?}", new_state);
+        }
+
         Ok(())
     }
 
-    fn create_minimal_icon() -> &'static [u8] {
-        // Very simple 16x16 ICO data - just a few bytes for testing
-        static MINIMAL_ICON: &[u8] = &[
-            0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10, 0x00, 0x00, 0x01, 0x00,
-            0x20, 0x00, 0x68, 0x04, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00
-        ];
-        MINIMAL_ICON
+    fn load_icon_for_state(state: &IconState) -> Result<Icon, Box<dyn Error>> {
+        let icon_filename = match state {
+            IconState::Cool => "icons/thermometer-cool.ico",
+            IconState::Warm => "icons/thermometer-warm.ico",
+            IconState::Hot => "icons/thermometer-hot.ico",
+        };
+
+        // Try to load the specific temperature icon
+        if std::path::Path::new(icon_filename).exists() {
+            match Icon::from_path(icon_filename, None) {
+                Ok(icon) => {
+                    info!("✅ Loaded {} icon", icon_filename);
+                    return Ok(icon);
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to load {}: {}", icon_filename, e);
+                }
+            }
+        }
+
+        // Fallback to general icon.ico
+        if std::path::Path::new("icons/icon.ico").exists() {
+            match Icon::from_path("icons/icon.ico", None) {
+                Ok(icon) => {
+                    info!("✅ Loaded fallback icons/icon.ico");
+                    return Ok(icon);
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to load icons/icon.ico: {}", e);
+                }
+            }
+        }
+
+        // Create programmatic icon as last resort
+        warn!("⚠️ No icon files found, creating programmatic icon");
+        let rgba_image = Self::create_simple_rgba_image_for_state(state);
+        let icon = Icon::from_rgba(rgba_image.as_raw().clone(), rgba_image.width(), rgba_image.height())?;
+        Ok(icon)
     }
 
-    fn create_cool_icon() -> &'static [u8] {
-        // Green icon for cool temperatures
-        Self::create_minimal_icon()
+
+    fn create_simple_rgba_image_for_state(state: &IconState) -> RgbaImage {
+        let mut img = RgbaImage::new(16, 16);
+
+        // Choose color based on state
+        let fill_color = match state {
+            IconState::Cool => [0, 255, 0, 255],   // Green
+            IconState::Warm => [255, 165, 0, 255], // Orange
+            IconState::Hot => [255, 0, 0, 255],    // Red
+        };
+
+        // Create a simple thermometer pattern
+        for y in 0..16 {
+            for x in 0..16 {
+                let pixel = if x == 8 && y < 12 {
+                    // Vertical line (thermometer tube) - state color
+                    fill_color
+                } else if (x == 7 || x == 9) && y < 12 {
+                    // Thermometer outline - black
+                    [0, 0, 0, 255]
+                } else if (6..=10).contains(&x) && (12..=14).contains(&y) {
+                    // Thermometer bulb - state color
+                    fill_color
+                } else if (5..=11).contains(&x) && (11..=15).contains(&y) {
+                    // Bulb outline - black
+                    [0, 0, 0, 255]
+                } else {
+                    // Transparent background
+                    [0, 0, 0, 0]
+                };
+
+                img.put_pixel(x, y, image::Rgba(pixel));
+            }
+        }
+
+        img
     }
 
-    fn create_warm_icon() -> &'static [u8] {
-        // Yellow icon for warm temperatures
-        Self::create_minimal_icon()
-    }
-
-    fn create_hot_icon() -> &'static [u8] {
-        // Red icon for hot temperatures
-        Self::create_minimal_icon()
-    }
 }

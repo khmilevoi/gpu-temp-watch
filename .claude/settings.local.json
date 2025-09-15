@@ -13,7 +13,8 @@
       "Bash(rustup toolchain:*)",
       "Bash(rustup:*)",
       "Bash(./target/release/gpu-temp-watch.exe --status)",
-      "Bash(./target/release/gpu-temp-watch.exe --install)"
+      "Bash(./target/release/gpu-temp-watch.exe --install)",
+      "Bash(move:*)"
     ],
     "deny": [],
     "ask": []

@@ -3,11 +3,11 @@
 mod monitor;
 mod notifications;
 mod config;
-mod tray_new;
-use tray_new as tray;
+mod tray;
 mod logging;
 mod autostart;
 mod gui;
+mod web_server;
 
 use monitor::{TempMonitor, GpuTempReading};
 use notifications::NotificationManager;
@@ -16,6 +16,7 @@ use tray::{SystemTray, TrayMessage};
 use logging::FileLogger;
 use autostart::AutoStart;
 use gui::{GuiDialogs, GuiManager};
+use web_server::{WebServer, open_browser};
 
 use std::time::Duration;
 use std::env;
@@ -91,6 +92,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 GPU Temperature Monitor v0.1.0");
     println!("🔧 Initializing...");
 
+    // Check and install autostart on first run if not already installed
+    match AutoStart::new() {
+        Ok(autostart) => {
+            if !autostart.is_installed() {
+                println!("📦 First run detected, installing autostart...");
+                match autostart.install() {
+                    Ok(_) => println!("✅ Autostart installed successfully"),
+                    Err(e) => eprintln!("⚠️ Failed to install autostart: {:?}", e),
+                }
+            }
+        }
+        Err(e) => eprintln!("⚠️ Failed to create autostart manager: {:?}", e),
+    }
+
     // Load configuration
     let config = Config::load_or_create()?;
     config.validate()?;
@@ -141,6 +156,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut monitoring_paused = false;
     let mut gui_manager = GuiManager::new();
 
+    // Initialize and start web server
+    let web_server = WebServer::new(config.clone(), 18235);
+    let web_state = web_server.get_state();
+
+    // Start web server in background
+    let _web_server_handle = {
+        let web_server = web_server;
+        tokio::spawn(async move {
+            if let Err(e) = web_server.start().await {
+                eprintln!("❌ Web server error: {}", e);
+            }
+        })
+    };
+
+    println!("🌐 Web interface available at http://localhost:18235");
+
     // Main monitoring loop
     loop {
         // Handle system tray messages
@@ -170,6 +201,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("⚙️ Settings clicked");
                         let settings_msg = format!("🔧 Current Settings:\n\n🌡️ Temperature Threshold: {:.1}°C\n⏱️ Poll Interval: {}s\n\n💡 Edit config.json to change settings", config.temperature_threshold_c, config.poll_interval_sec);
                         let _ = notification_manager.send_status_notification(&settings_msg);
+                    }
+                    TrayMessage::OpenWebInterface => {
+                        println!("🌐 Opening web interface...");
+                        if let Err(e) = open_browser("http://localhost:18235") {
+                            let _ = notification_manager.send_status_notification(&format!("❌ Failed to open web interface: {}", e));
+                        } else {
+                            let _ = notification_manager.send_status_notification("🌐 Web interface opened in browser");
+                        }
                     }
                     TrayMessage::ShowLogs => {
                         println!("📋 Show logs clicked");
@@ -240,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Monitor temperatures if not paused
         if !monitoring_paused {
-            match monitor_temperatures(&temp_monitor, &mut notification_manager, &config, &mut system_tray, &file_logger, &mut gui_manager).await {
+            match monitor_temperatures(&temp_monitor, &mut notification_manager, &config, &mut system_tray, &file_logger, &mut gui_manager, &web_state).await {
                 Ok(_) => {},
                 Err(e) => {
                     eprintln!("❌ Monitoring error: {}", e);
@@ -255,6 +294,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // Update web state
+        {
+            let mut state = web_state.write().unwrap();
+            state.monitoring_paused = monitoring_paused;
+            state.uptime_seconds += config.poll_interval_sec;
+        }
+
         sleep(Duration::from_secs(config.poll_interval_sec)).await;
     }
 }
@@ -266,6 +312,7 @@ async fn monitor_temperatures(
     system_tray: &mut Option<SystemTray>,
     file_logger: &FileLogger,
     gui_manager: &mut GuiManager,
+    web_state: &web_server::SharedState,
 ) -> Result<(), Box<dyn std::error::Error>> {
 
     let gpu_temps = temp_monitor.get_gpu_temperatures().await?;
@@ -301,6 +348,20 @@ async fn monitor_temperatures(
 
     // Update GUI manager with current temperature
     gui_manager.update_temperature(max_temp);
+
+    // Update web state with current temperature and add log entries
+    {
+        let mut state = web_state.write().unwrap();
+        state.current_temperature = max_temp;
+        state.config = config.clone();
+
+        // Add temperature reading to web logs
+        for reading in &gpu_temps {
+            let level = if reading.temperature > config.temperature_threshold_c { "WARN" } else { "INFO" };
+            let message = format!("{}: {:.1}°C", reading.sensor_name, reading.temperature);
+            state.add_log(level, &message);
+        }
+    }
 
     // Update system tray icon based on temperature
     if let Some(ref mut tray) = system_tray {
