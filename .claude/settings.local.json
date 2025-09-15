@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "WebSearch",
+      "Bash(wscript.exe:*)"
     ],
     "deny": [],
     "ask": []

@@ -9,10 +9,26 @@ $LhmUrl           = "http://127.0.0.1:8085/data.json"
 # Какие названия сенсоров считаем «температурой GPU»
 $GpuTempNamePatterns = @("*GPU*Core*", "*GPU*Hot*")   # можно добавить "*GPU*Temperature*"
 
-# Логи
-$LogDir  = ".\Logs"
+# Логи (абсолютные пути для работы из Scheduled Task)
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$LogDir  = "$ScriptDir\Logs"
 $LogFile = "$LogDir\GpuTempWatch.log"
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+
+# Завершаем старые экземпляры
+$currentPID = $PID
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+$oldProcesses = Get-WmiObject Win32_Process | Where-Object {
+    $_.CommandLine -like "*$scriptName*" -and $_.ProcessId -ne $currentPID
+}
+foreach ($proc in $oldProcesses) {
+    try {
+        Write-Log "INFO: Завершение старого процесса PID $($proc.ProcessId)"
+        Stop-Process -Id $proc.ProcessId -Force
+    } catch {
+        Write-Log "WARN: Не удалось завершить процесс PID $($proc.ProcessId)"
+    }
+}
 
 # Низкий приоритет
 try { (Get-Process -Id $PID).PriorityClass = 'Idle' } catch {}
@@ -22,14 +38,40 @@ function Write-Log([string]$msg) {
     "$ts $msg" | Out-File -FilePath $LogFile -Append -Encoding utf8
 }
 
-# Уведомления
+# Уведомления - улучшенная инициализация BurntToast
 $BurntToastAvailable = $false
 try {
-    Import-Module BurntToast -ErrorAction Stop
-    $BurntToastAvailable = $true
-    Write-Log "INFO: BurntToast модуль загружен"
+    # Пытаемся принудительно импортировать модуль с разных путей
+    $burntToastModule = Get-Module -ListAvailable -Name BurntToast | Select-Object -First 1
+    if ($burntToastModule) {
+        Import-Module BurntToast -ErrorAction Stop -Force -Global
+        $BurntToastAvailable = $true
+        Write-Log "INFO: BurntToast модуль v$($burntToastModule.Version) загружен из $($burntToastModule.ModuleBase)"
+    } else {
+        # Попытка установить модуль если его нет
+        Write-Log "WARN: BurntToast модуль не найден, попытка установки..."
+        try {
+            Install-Module BurntToast -Force -Scope CurrentUser -Repository PSGallery -ErrorAction Stop
+            Import-Module BurntToast -ErrorAction Stop -Force -Global
+            $BurntToastAvailable = $true
+            Write-Log "INFO: BurntToast модуль успешно установлен и загружен"
+        } catch {
+            Write-Log "ERROR: Не удалось установить BurntToast — $($_.Exception.Message)"
+        }
+    }
 } catch {
-    Write-Log "WARN: BurntToast модуль недоступен, используется fallback уведомления"
+    Write-Log "ERROR: Ошибка загрузки BurntToast — $($_.Exception.Message)"
+    # Дополнительная попытка с прямым путем к модулю
+    try {
+        $userModulesPath = "$env:USERPROFILE\Documents\WindowsPowerShell\Modules\BurntToast"
+        if (Test-Path $userModulesPath) {
+            Import-Module $userModulesPath -Force -Global
+            $BurntToastAvailable = $true
+            Write-Log "INFO: BurntToast загружен по прямому пути"
+        }
+    } catch {
+        Write-Log "ERROR: Последняя попытка загрузки BurntToast неудачна — $($_.Exception.Message)"
+    }
 }
 
 # Переменные для умного cooldown
@@ -82,19 +124,37 @@ function Notify([double]$tc, [int]$threshold) {
     # Всегда логируем предупреждение
     Write-Log "ALERT: GPU $tc °C >= $threshold °C"
 
-    # Показываем уведомление только если BurntToast доступен (не навязчиво)
+    # 1. Приоритет: BurntToast (красивые Windows 11 toast)
     if ($BurntToastAvailable) {
         try {
             New-BurntToastNotification -Text "⚠ Перегрев видеокарты", "GPU: $tc °C (порог: $threshold °C)" -Sound 'Alarm2'
-            Write-Log "INFO: Toast уведомление отправлено"
+            Write-Log "INFO: BurntToast уведомление отправлено"
             return
         } catch {
-            Write-Log "ERROR: BurntToast ошибка — $($_.Exception.Message)"
+            Write-Log "ERROR: BurntToast ошибка — $($_.Exception.Message), переход на fallback"
         }
     }
 
-    # Консольное предупреждение без MessageBox (не навязчиво)
+    # 2. Fallback: MessageBox (навязчивые диалоги)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show(
+            $message,
+            "🔥 GPU Temperature Alert",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning,
+            [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
+            [System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly
+        ) | Out-Null
+        Write-Log "INFO: MessageBox уведомление отправлено"
+        return
+    } catch {
+        Write-Log "ERROR: MessageBox ошибка — $($_.Exception.Message)"
+    }
+
+    # 3. Последний fallback: консольное предупреждение
     Write-Host $message -ForegroundColor Red -BackgroundColor Yellow
+    Write-Log "INFO: Консольное уведомление отправлено"
 }
 
 Write-Log "=== Запуск мониторинга (порог $ThresholdC °C, интервал $PollSeconds c) ==="

@@ -33,6 +33,8 @@ GpuTempWatch is a PowerShell script for monitoring GPU temperatures using LibreH
 ## Development Commands
 
 ### Running the Script
+
+#### Console Version
 ```powershell
 # Run directly
 .\GpuTempWatch.ps1
@@ -40,6 +42,45 @@ GpuTempWatch is a PowerShell script for monitoring GPU temperatures using LibreH
 # Run in background
 Start-Process powershell -ArgumentList "-File .\GpuTempWatch.ps1" -WindowStyle Hidden
 ```
+
+#### System Tray Version (Recommended)
+```powershell
+# Run tray version with GUI controls
+.\GpuTempWatch-Tray.ps1
+```
+
+**System Tray Features:**
+- 🟢🟡🔴 Color-coded temperature indication
+- Right-click context menu with settings and controls
+- Real-time temperature display
+- Pause/resume monitoring
+- Settings dialog for threshold and interval
+- Quick access to logs
+- Automatic detection and optional termination of duplicate processes
+- Runs in background (console window automatically hidden)
+
+### Automatic Startup Setup
+Use the included setup script for automatic startup:
+
+```powershell
+# Install tray version (default, recommended)
+.\Setup-GpuTempWatch.ps1
+
+# Install console version
+.\Setup-GpuTempWatch.ps1 -Console
+
+# Force reinstall if task already exists
+.\Setup-GpuTempWatch.ps1 -Force
+
+# Uninstall autostart
+.\Setup-GpuTempWatch.ps1 -Uninstall
+```
+
+The setup script will:
+- Configure PowerShell execution policy
+- Install BurntToast module if missing
+- Create scheduled task for startup at user login
+- Run with limited privileges in hidden window
 
 ### Requirements
 - LibreHardwareMonitor must be running with web server enabled on port 8085
