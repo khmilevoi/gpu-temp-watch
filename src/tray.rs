@@ -1,4 +1,4 @@
-use trayicon::{TrayIcon, TrayIconBuilder, MenuItem, MenuBuilder};
+use trayicon::{TrayIcon, TrayIconBuilder, MenuBuilder};
 use std::sync::mpsc;
 use std::error::Error;
 use log::{info, error, warn};
@@ -10,46 +10,95 @@ pub enum TrayMessage {
     Resume,
     Settings,
     ShowLogs,
+    InstallAutostart,
+    UninstallAutostart,
+    About,
+    OpenConfig,
+    OpenLogsFolder,
 }
 
 pub struct SystemTray {
     _tray_icon: TrayIcon<TrayMessage>,
     receiver: mpsc::Receiver<TrayMessage>,
+    _icon_data: Vec<u8>, // Store icon data to ensure it lives long enough
 }
 
 impl SystemTray {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        // Build the tray menu
+        // Build the tray menu with explicit activation
         let tray_menu = MenuBuilder::new()
-            .separator()
-            .item("🌡️ GPU Temperature Monitor", TrayMessage::Settings)
+            .item("🌡️ GPU Temperature Monitor", TrayMessage::About)
             .separator()
             .item("⏸️ Pause Monitoring", TrayMessage::Pause)
             .item("▶️ Resume Monitoring", TrayMessage::Resume)
             .separator()
+            .item("⚙️ Settings", TrayMessage::Settings)
             .item("📋 Show Logs", TrayMessage::ShowLogs)
+            .item("📂 Open Config File", TrayMessage::OpenConfig)
+            .item("📁 Open Logs Folder", TrayMessage::OpenLogsFolder)
+            .separator()
+            .item("🔧 Install Autostart", TrayMessage::InstallAutostart)
+            .item("🗑️ Remove Autostart", TrayMessage::UninstallAutostart)
             .separator()
             .item("❌ Exit", TrayMessage::Exit);
 
         // Create callback function for tray clicks
         let (callback_sender, callback_receiver) = mpsc::channel();
         let callback = move |msg: &TrayMessage| {
-            let _ = callback_sender.send(msg.clone());
+            println!("🖱️ Tray menu item clicked: {:?}", msg);
+            if let Err(e) = callback_sender.send(msg.clone()) {
+                eprintln!("❌ Failed to send tray message: {:?}", e);
+            }
         };
 
-        // Create the tray icon using static icon data
+        // Try to load the thermometer icon from icons folder
+        let icon_data = if std::path::Path::new("icons/thermometer.ico").exists() {
+            match std::fs::read("icons/thermometer.ico") {
+                Ok(data) => {
+                    info!("✅ Loaded icons/thermometer.ico file");
+                    data
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to read icons/thermometer.ico: {}, using embedded icon", e);
+                    Self::create_minimal_icon().to_vec()
+                }
+            }
+        } else if std::path::Path::new("icons/icon.ico").exists() {
+            match std::fs::read("icons/icon.ico") {
+                Ok(data) => {
+                    info!("✅ Loaded icons/icon.ico file");
+                    data
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to read icons/icon.ico: {}, using embedded icon", e);
+                    Self::create_minimal_icon().to_vec()
+                }
+            }
+        } else {
+            info!("ℹ️ No external icon file found in icons/ folder, using embedded icon");
+            Self::create_minimal_icon().to_vec()
+        };
+
+        // Store icon data in a static location to satisfy lifetime requirements
+        let icon_bytes: &'static [u8] = Box::leak(icon_data.into_boxed_slice());
+
+        // Create the tray icon with explicit settings
+        println!("🔧 Creating tray icon with menu...");
         let tray_icon = TrayIconBuilder::new()
             .sender(callback)
-            .icon_from_buffer(Self::get_static_icon())
-            .tooltip("GPU Temperature Monitor")
+            .icon_from_buffer(icon_bytes)
+            .tooltip("GPU Temperature Monitor - Right click for menu")
             .menu(tray_menu)
             .build()?;
+
+        println!("🔧 Tray icon created successfully");
 
         info!("✅ System tray initialized");
 
         Ok(SystemTray {
             _tray_icon: tray_icon,
             receiver: callback_receiver,
+            _icon_data: vec![], // We don't need to store it since it's leaked
         })
     }
 
@@ -65,65 +114,54 @@ impl SystemTray {
     }
 
     pub fn update_icon_for_temperature(&mut self, temperature: f32, threshold: f32) -> Result<(), Box<dyn Error>> {
-        let _icon_data = if temperature > threshold {
-            Self::create_hot_icon()
+        // Determine which icon to use based on temperature
+        let icon_filename = if temperature > threshold {
+            "icons/thermometer-hot.ico"
         } else if temperature > threshold - 10.0 {
-            Self::create_warm_icon()
+            "icons/thermometer-warm.ico"
         } else {
-            Self::create_cool_icon()
+            "icons/thermometer-cool.ico"
         };
 
-        // Note: trayicon 0.3.0 may not support dynamic icon updates
-        // This is a placeholder for the functionality
-        warn!("Dynamic icon updates not fully supported in current trayicon version");
+        // Log the temperature state
+        let state = if temperature > threshold {
+            "🔴 HOT"
+        } else if temperature > threshold - 10.0 {
+            "🟡 WARM"
+        } else {
+            "🟢 COOL"
+        };
+
+        println!("🌡️  Temperature: {:.1}°C - State: {} (using {})", temperature, state, icon_filename);
+
+        // Note: trayicon 0.3.0 may not support dynamic icon updates during runtime
+        // We would need to recreate the tray icon to change it, which is complex
+        // For now, we just log the desired state
+        info!("Icon should be: {}", icon_filename);
         Ok(())
     }
 
-    fn get_static_icon() -> &'static [u8] {
-        // Create a minimal ICO file as static data
-        // This is a basic 16x16 monochrome icon
-        &[
-            0x00, 0x00, // Reserved. Must always be 0.
-            0x01, 0x00, // Image type: 1 for icon (.ICO), 2 for cursor (.CUR).
-            0x01, 0x00, // Number of images in the file.
-
-            // Image directory (16 bytes per image)
-            0x10, // Width (16 pixels)
-            0x10, // Height (16 pixels)
-            0x00, // Number of colors in color palette (0 = no palette)
-            0x00, // Reserved. Should be 0.
-            0x01, 0x00, // Color planes (0 or 1)
-            0x01, 0x00, // Bits per pixel (1, 4, 8, 16, 24, 32)
-            0x28, 0x00, 0x00, 0x00, // Size of image data in bytes
-            0x16, 0x00, 0x00, 0x00, // Offset of image data from beginning of file
-
-            // Image data (40 byte bitmap header + image data)
-            0x28, 0x00, 0x00, 0x00, // Header size (40 bytes)
-            0x10, 0x00, 0x00, 0x00, // Width
-            0x20, 0x00, 0x00, 0x00, // Height (doubled for icon)
-            0x01, 0x00, // Planes
-            0x01, 0x00, // Bits per pixel
-            0x00, 0x00, 0x00, 0x00, // Compression
-            0x00, 0x00, 0x00, 0x00, // Image size (can be 0 for uncompressed)
-            0x00, 0x00, 0x00, 0x00, // X pixels per meter
-            0x00, 0x00, 0x00, 0x00, // Y pixels per meter
-            0x00, 0x00, 0x00, 0x00, // Colors used
-            0x00, 0x00, 0x00, 0x00, // Important colors
-        ]
+    fn create_minimal_icon() -> &'static [u8] {
+        // Very simple 16x16 ICO data - just a few bytes for testing
+        static MINIMAL_ICON: &[u8] = &[
+            0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10, 0x00, 0x00, 0x01, 0x00,
+            0x20, 0x00, 0x68, 0x04, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00
+        ];
+        MINIMAL_ICON
     }
 
     fn create_cool_icon() -> &'static [u8] {
         // Green icon for cool temperatures
-        Self::get_static_icon()
+        Self::create_minimal_icon()
     }
 
     fn create_warm_icon() -> &'static [u8] {
         // Yellow icon for warm temperatures
-        Self::get_static_icon()
+        Self::create_minimal_icon()
     }
 
     fn create_hot_icon() -> &'static [u8] {
         // Red icon for hot temperatures
-        Self::get_static_icon()
+        Self::create_minimal_icon()
     }
 }

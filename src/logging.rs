@@ -1,8 +1,8 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use chrono::{DateTime, Local};
-use log::{info, warn, error};
+use chrono::Local;
+use log::{error, info};
 
 pub struct FileLogger {
     log_file_path: Option<String>,
@@ -11,7 +11,7 @@ pub struct FileLogger {
 
 impl FileLogger {
     pub fn new(config: &crate::config::Config) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut logger = Self {
+        let logger = Self {
             log_file_path: config.log_file_path.clone(),
             enabled: config.enable_logging,
         };
@@ -124,10 +124,10 @@ impl FileLogger {
         }
 
         if let Some(ref log_path) = self.log_file_path {
-            if let Some(parent) = Path::new(log_path).parent() {
+            if let Some(_parent) = Path::new(log_path).parent() {
                 // This is a simplified cleanup - in a real implementation,
                 // you'd parse log file dates and remove old ones
-                info!("🧹 Log cleanup functionality (max age: {} days) - placeholder", max_age_days);
+                println!("🧹 Log cleanup functionality (max age: {} days) - placeholder", max_age_days);
             }
         }
 

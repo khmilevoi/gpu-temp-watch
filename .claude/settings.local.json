@@ -11,7 +11,9 @@
       "Bash(rustup-init.exe:*)",
       "Bash(rustc --version)",
       "Bash(rustup toolchain:*)",
-      "Bash(rustup:*)"
+      "Bash(rustup:*)",
+      "Bash(./target/release/gpu-temp-watch.exe --status)",
+      "Bash(./target/release/gpu-temp-watch.exe --install)"
     ],
     "deny": [],
     "ask": []

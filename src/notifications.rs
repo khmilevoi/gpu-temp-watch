@@ -1,6 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use winrt_notification::{Toast, Duration as ToastDuration};
-use log::{info, warn, error};
+use log::{info, warn};
+
+#[cfg(windows)]
+use winapi::um::winuser::{MessageBoxW, MB_OK, MB_ICONWARNING, MB_ICONINFORMATION};
+#[cfg(windows)]
+use winapi::shared::ntdef::NULL;
 
 pub struct NotificationManager {
     last_notification_time: Option<u64>,
@@ -17,6 +22,26 @@ impl NotificationManager {
             base_cooldown_sec: 20,
             max_cooldown_sec: 320,
         }
+    }
+
+    #[cfg(windows)]
+    fn show_message_box(title: &str, message: &str, icon_type: u32) {
+        unsafe {
+            let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+            let message_wide: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+
+            MessageBoxW(
+                NULL as *mut _,
+                message_wide.as_ptr(),
+                title_wide.as_ptr(),
+                MB_OK | icon_type,
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn show_message_box(_title: &str, _message: &str, _icon_type: u32) {
+        // No-op for non-Windows platforms
     }
 
     pub fn should_notify(&mut self, temp_exceeds_threshold: bool) -> bool {
@@ -72,11 +97,26 @@ impl NotificationManager {
         {
             Ok(_) => {
                 info!("✅ Toast notification sent successfully");
+                println!("📱 Toast notification: {}", message);
             }
             Err(e) => {
                 warn!("⚠️  Failed to send toast notification: {}", e);
-                // Fall back to console only
+                println!("❌ Toast failed: {}", e);
+                warn!("🔄 Falling back to message box notification");
+
+                // Always fallback to message box for alerts
+                #[cfg(windows)]
+                {
+                    println!("💬 Showing message box instead");
+                    Self::show_message_box(title, &message, MB_ICONWARNING);
+                }
             }
+        }
+
+        // For debugging: log to console instead of showing modal dialogs that block tray
+        #[cfg(debug_assertions)]
+        {
+            println!("🔔 DEBUG: Would show GUI dialog - Temperature Alert: {}", message);
         }
 
         self.cooldown_level += 1;
@@ -99,6 +139,12 @@ impl NotificationManager {
             }
             Err(e) => {
                 warn!("⚠️  Failed to send status toast notification: {}", e);
+
+                // For startup notifications, show message box as well
+                if message.contains("started") {
+                    #[cfg(windows)]
+                    Self::show_message_box("GPU Temperature Monitor", message, MB_ICONINFORMATION);
+                }
             }
         }
 
