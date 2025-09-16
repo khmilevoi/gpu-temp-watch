@@ -1,18 +1,21 @@
 use crate::autostart::AutoStart;
 use crate::config::Config;
-use tracing::info;
+use axum::{
+    extract::{
+        ws::{WebSocket, WebSocketUpgrade},
+        Request, State,
+    },
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
+    routing::{get, post, put},
+    Json, Router,
+};
+use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use axum::{
-    extract::{ws::{WebSocket, WebSocketUpgrade}, State, Request},
-    response::{Html, Response, IntoResponse},
-    routing::{get, post, put},
-    middleware::{self, Next},
-    Router, Json,
-};
-use tower_http::trace::TraceLayer;
 use tokio::sync::broadcast;
-use futures_util::{sink::SinkExt, stream::StreamExt};
+use tower_http::trace::TraceLayer;
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebConfig {
@@ -164,10 +167,7 @@ impl WebServer {
         let (app_state, _) = AppState::new(config);
         let shared_state = Arc::new(RwLock::new(app_state));
 
-        Self {
-            shared_state,
-            port,
-        }
+        Self { shared_state, port }
     }
 
     pub fn get_state(&self) -> SharedState {
@@ -207,27 +207,35 @@ async fn log_requests(req: Request, next: Next) -> impl IntoResponse {
     let headers = req.headers().clone();
 
     // Log incoming request
-    log_both!(info, "🌐 HTTP Request", Some(serde_json::json!({
-        "method": method.to_string(),
-        "uri": uri.to_string(),
-        "path": uri.path(),
-        "query": uri.query().unwrap_or(""),
-        "user_agent": headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or(""),
-        "content_type": headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or(""),
-        "content_length": headers.get("content-length").and_then(|v| v.to_str().ok()).unwrap_or("0")
-    })));
+    log_both!(
+        info,
+        "🌐 HTTP Request",
+        Some(serde_json::json!({
+            "method": method.to_string(),
+            "uri": uri.to_string(),
+            "path": uri.path(),
+            "query": uri.query().unwrap_or(""),
+            "user_agent": headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or(""),
+            "content_type": headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or(""),
+            "content_length": headers.get("content-length").and_then(|v| v.to_str().ok()).unwrap_or("0")
+        }))
+    );
 
     let start_time = std::time::Instant::now();
     let response = next.run(req).await;
     let duration = start_time.elapsed();
 
     // Log response
-    log_both!(info, "📤 HTTP Response", Some(serde_json::json!({
-        "method": method.to_string(),
-        "uri": uri.to_string(),
-        "status": response.status().as_u16(),
-        "duration_ms": duration.as_millis()
-    })));
+    log_both!(
+        info,
+        "📤 HTTP Response",
+        Some(serde_json::json!({
+            "method": method.to_string(),
+            "uri": uri.to_string(),
+            "status": response.status().as_u16(),
+            "duration_ms": duration.as_millis()
+        }))
+    );
 
     response
 }
@@ -262,24 +270,32 @@ async fn get_config(State(state): State<SharedState>) -> Json<WebConfig> {
     let app_state = match state.read() {
         Ok(state) => state,
         Err(e) => {
-            log_both!(error, "❌ Failed to acquire read lock on app state for config request", Some(serde_json::json!({
-                "error": e.to_string()
-            })));
+            log_both!(
+                error,
+                "❌ Failed to acquire read lock on app state for config request",
+                Some(serde_json::json!({
+                    "error": e.to_string()
+                }))
+            );
             // Return default config in case of lock failure
             return Json(WebConfig::from(crate::config::Config::default()));
         }
     };
 
     let web_config = WebConfig::from(app_state.config.clone());
-    log_both!(debug, "📋 Returning current configuration", Some(serde_json::json!({
-        "config": {
-            "temperature_threshold_c": web_config.temperature_threshold_c,
-            "poll_interval_sec": web_config.poll_interval_sec,
-            "base_cooldown_sec": web_config.base_cooldown_sec,
-            "enable_logging": web_config.enable_logging,
-            "log_file_path": web_config.log_file_path
-        }
-    })));
+    log_both!(
+        debug,
+        "📋 Returning current configuration",
+        Some(serde_json::json!({
+            "config": {
+                "temperature_threshold_c": web_config.temperature_threshold_c,
+                "poll_interval_sec": web_config.poll_interval_sec,
+                "base_cooldown_sec": web_config.base_cooldown_sec,
+                "enable_logging": web_config.enable_logging,
+                "log_file_path": web_config.log_file_path
+            }
+        }))
+    );
 
     Json(web_config)
 }
@@ -291,23 +307,31 @@ async fn update_config(
 ) -> impl IntoResponse {
     use crate::log_both;
 
-    log_both!(info, "🌐 Received configuration update request via web API", Some(serde_json::json!({
-        "new_config": {
-            "temperature_threshold_c": web_config.temperature_threshold_c,
-            "poll_interval_sec": web_config.poll_interval_sec,
-            "base_cooldown_sec": web_config.base_cooldown_sec,
-            "enable_logging": web_config.enable_logging,
-            "log_file_path": web_config.log_file_path
-        }
-    })));
+    log_both!(
+        info,
+        "🌐 Received configuration update request via web API",
+        Some(serde_json::json!({
+            "new_config": {
+                "temperature_threshold_c": web_config.temperature_threshold_c,
+                "poll_interval_sec": web_config.poll_interval_sec,
+                "base_cooldown_sec": web_config.base_cooldown_sec,
+                "enable_logging": web_config.enable_logging,
+                "log_file_path": web_config.log_file_path
+            }
+        }))
+    );
 
     // Get write lock on shared state
     let mut app_state = match state.write() {
         Ok(state) => state,
         Err(e) => {
-            log_both!(error, "❌ Failed to acquire write lock on app state", Some(serde_json::json!({
-                "error": e.to_string()
-            })));
+            log_both!(
+                error,
+                "❌ Failed to acquire write lock on app state",
+                Some(serde_json::json!({
+                    "error": e.to_string()
+                }))
+            );
             return Json(serde_json::json!({
                 "success": false,
                 "error": "Internal server error: Failed to acquire state lock"
@@ -316,29 +340,37 @@ async fn update_config(
     };
 
     // Log the current config for comparison
-    log_both!(debug, "📋 Current configuration before update", Some(serde_json::json!({
-        "current_config": {
-            "temperature_threshold_c": app_state.config.temperature_threshold_c,
-            "poll_interval_sec": app_state.config.poll_interval_sec,
-            "base_cooldown_sec": app_state.config.base_cooldown_sec,
-            "enable_logging": app_state.config.enable_logging,
-            "log_file_path": app_state.config.log_file_path
-        }
-    })));
+    log_both!(
+        debug,
+        "📋 Current configuration before update",
+        Some(serde_json::json!({
+            "current_config": {
+                "temperature_threshold_c": app_state.config.temperature_threshold_c,
+                "poll_interval_sec": app_state.config.poll_interval_sec,
+                "base_cooldown_sec": app_state.config.base_cooldown_sec,
+                "enable_logging": app_state.config.enable_logging,
+                "log_file_path": app_state.config.log_file_path
+            }
+        }))
+    );
 
     // Convert web config to internal config
     let new_config: crate::config::Config = web_config.into();
 
     // Validate new configuration
     if let Err(e) = new_config.validate() {
-        log_both!(warn, "⚠️ Configuration validation failed", Some(serde_json::json!({
-            "validation_error": e.to_string(),
-            "rejected_config": {
-                "temperature_threshold_c": new_config.temperature_threshold_c,
-                "poll_interval_sec": new_config.poll_interval_sec,
-                "base_cooldown_sec": new_config.base_cooldown_sec
-            }
-        })));
+        log_both!(
+            warn,
+            "⚠️ Configuration validation failed",
+            Some(serde_json::json!({
+                "validation_error": e.to_string(),
+                "rejected_config": {
+                    "temperature_threshold_c": new_config.temperature_threshold_c,
+                    "poll_interval_sec": new_config.poll_interval_sec,
+                    "base_cooldown_sec": new_config.base_cooldown_sec
+                }
+            }))
+        );
 
         return Json(serde_json::json!({
             "success": false,
@@ -353,16 +385,20 @@ async fn update_config(
 
     // Save to file with detailed logging
     if let Err(e) = app_state.config.save() {
-        log_both!(error, "❌ Failed to persist configuration to file", Some(serde_json::json!({
-            "error": e.to_string(),
-            "attempted_config": {
-                "temperature_threshold_c": app_state.config.temperature_threshold_c,
-                "poll_interval_sec": app_state.config.poll_interval_sec,
-                "base_cooldown_sec": app_state.config.base_cooldown_sec,
-                "enable_logging": app_state.config.enable_logging,
-                "log_file_path": app_state.config.log_file_path
-            }
-        })));
+        log_both!(
+            error,
+            "❌ Failed to persist configuration to file",
+            Some(serde_json::json!({
+                "error": e.to_string(),
+                "attempted_config": {
+                    "temperature_threshold_c": app_state.config.temperature_threshold_c,
+                    "poll_interval_sec": app_state.config.poll_interval_sec,
+                    "base_cooldown_sec": app_state.config.base_cooldown_sec,
+                    "enable_logging": app_state.config.enable_logging,
+                    "log_file_path": app_state.config.log_file_path
+                }
+            }))
+        );
 
         return Json(serde_json::json!({
             "success": false,
@@ -370,11 +406,19 @@ async fn update_config(
         }));
     }
 
-    log_both!(info, "💾 Configuration successfully persisted to file", None);
+    log_both!(
+        info,
+        "💾 Configuration successfully persisted to file",
+        None
+    );
 
     // Broadcast config update to WebSocket clients
     app_state.broadcast_config_update();
-    log_both!(info, "📡 Configuration update broadcasted to WebSocket clients", None);
+    log_both!(
+        info,
+        "📡 Configuration update broadcasted to WebSocket clients",
+        None
+    );
 
     Json(serde_json::json!({
         "success": true,
@@ -387,39 +431,37 @@ async fn handle_action(
     Json(action): Json<ActionRequest>,
 ) -> Json<serde_json::Value> {
     match action.action.as_str() {
-        "toggle_autostart" => {
-            match AutoStart::new() {
-                Ok(autostart) => {
-                    if autostart.is_installed() {
-                        match autostart.uninstall() {
-                            Ok(_) => Json(serde_json::json!({
-                                "success": true,
-                                "message": "Autostart disabled"
-                            })),
-                            Err(e) => Json(serde_json::json!({
-                                "success": false,
-                                "error": format!("Failed to disable autostart: {}", e)
-                            })),
-                        }
-                    } else {
-                        match autostart.install() {
-                            Ok(_) => Json(serde_json::json!({
-                                "success": true,
-                                "message": "Autostart enabled"
-                            })),
-                            Err(e) => Json(serde_json::json!({
-                                "success": false,
-                                "error": format!("Failed to enable autostart: {}", e)
-                            })),
-                        }
+        "toggle_autostart" => match AutoStart::new() {
+            Ok(autostart) => {
+                if autostart.is_installed() {
+                    match autostart.uninstall() {
+                        Ok(_) => Json(serde_json::json!({
+                            "success": true,
+                            "message": "Autostart disabled"
+                        })),
+                        Err(e) => Json(serde_json::json!({
+                            "success": false,
+                            "error": format!("Failed to disable autostart: {}", e)
+                        })),
+                    }
+                } else {
+                    match autostart.install() {
+                        Ok(_) => Json(serde_json::json!({
+                            "success": true,
+                            "message": "Autostart enabled"
+                        })),
+                        Err(e) => Json(serde_json::json!({
+                            "success": false,
+                            "error": format!("Failed to enable autostart: {}", e)
+                        })),
                     }
                 }
-                Err(e) => Json(serde_json::json!({
-                    "success": false,
-                    "error": format!("Failed to access autostart: {}", e)
-                })),
             }
-        }
+            Err(e) => Json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to access autostart: {}", e)
+            })),
+        },
         _ => Json(serde_json::json!({
             "success": false,
             "error": "Unknown action"
@@ -435,10 +477,7 @@ async fn health_check() -> Json<serde_json::Value> {
     }))
 }
 
-async fn websocket_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<SharedState>,
-) -> Response {
+async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> Response {
     ws.on_upgrade(|socket| handle_websocket(socket, state))
 }
 
@@ -469,14 +508,20 @@ async fn handle_websocket(socket: WebSocket, shared_state: SharedState) {
     };
 
     if let Ok(msg_text) = serde_json::to_string(&initial_message) {
-        let _ = sender.send(axum::extract::ws::Message::Text(msg_text)).await;
+        let _ = sender
+            .send(axum::extract::ws::Message::Text(msg_text))
+            .await;
     }
 
     // Handle incoming and outgoing messages
     let send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             if let Ok(msg_text) = serde_json::to_string(&msg) {
-                if sender.send(axum::extract::ws::Message::Text(msg_text)).await.is_err() {
+                if sender
+                    .send(axum::extract::ws::Message::Text(msg_text))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -518,9 +563,7 @@ pub fn open_browser(url: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(not(windows))]
     {
-        std::process::Command::new("xdg-open")
-            .arg(url)
-            .spawn()?;
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
     }
 
     Ok(())

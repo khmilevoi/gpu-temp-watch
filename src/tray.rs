@@ -1,8 +1,8 @@
-use tracing::{error, info, warn};
 use std::error::Error;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tracing::{error, info, warn};
 use tray_icon::Icon;
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -301,25 +301,11 @@ fn run_tray_event_loop(
         true,
         None,
     );
-    let logs_item = MenuItem::with_id(
-        MenuId::new("view_logs"),
-        "📋 View Logs",
-        true,
-        None,
-    );
-    let settings_item = MenuItem::with_id(
-        MenuId::new("edit_settings"),
-        "⚙️ Edit Settings",
-        true,
-        None,
-    );
+    let logs_item = MenuItem::with_id(MenuId::new("view_logs"), "📋 View Logs", true, None);
+    let settings_item =
+        MenuItem::with_id(MenuId::new("edit_settings"), "⚙️ Edit Settings", true, None);
     let separator = PredefinedMenuItem::separator();
-    let quit_item = MenuItem::with_id(
-        MenuId::new("quit_monitor"),
-        "❌ Quit Monitor",
-        true,
-        None,
-    );
+    let quit_item = MenuItem::with_id(MenuId::new("quit_monitor"), "❌ Quit Monitor", true, None);
 
     menu.append_items(&[
         &dashboard_item,
@@ -350,6 +336,7 @@ fn run_tray_event_loop(
     let tray_icon = match TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("GPU Temperature Monitor - Right click for menu, double click for settings")
+        .with_menu_on_left_click(false)
         .with_icon(icon)
         .build()
     {
@@ -424,10 +411,19 @@ mod tests {
 
     #[test]
     fn maps_known_menu_ids() {
-        assert_eq!(menu_id_to_message("open_dashboard"), Some(TrayMessage::OpenDashboard));
+        assert_eq!(
+            menu_id_to_message("open_dashboard"),
+            Some(TrayMessage::OpenDashboard)
+        );
         assert_eq!(menu_id_to_message("view_logs"), Some(TrayMessage::ViewLogs));
-        assert_eq!(menu_id_to_message("edit_settings"), Some(TrayMessage::EditSettings));
-        assert_eq!(menu_id_to_message("quit_monitor"), Some(TrayMessage::QuitMonitor));
+        assert_eq!(
+            menu_id_to_message("edit_settings"),
+            Some(TrayMessage::EditSettings)
+        );
+        assert_eq!(
+            menu_id_to_message("quit_monitor"),
+            Some(TrayMessage::QuitMonitor)
+        );
     }
 
     #[test]

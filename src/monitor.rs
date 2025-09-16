@@ -1,6 +1,6 @@
-use tracing::{debug, error, info, warn};
 use nvml_wrapper::Nvml;
 use std::error::Error;
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct GpuTempReading {

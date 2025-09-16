@@ -1,8 +1,8 @@
 use chrono::Local;
-use tracing::{error, info};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use tracing::{error, info};
 
 pub struct FileLogger {
     log_file_path: Option<String>,

@@ -19,11 +19,11 @@ use notifications::NotificationManager;
 use tray::{SystemTray, TrayMessage};
 use web_server::{open_browser, WebServer};
 
-use tracing::{info, warn};
 use std::env;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{info, warn};
 
 fn debug_print(msg: &str) {
     #[cfg(debug_assertions)]
@@ -48,10 +48,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     universal_logger::init_logger(Some("./Logs/GpuTempWatch_detailed.log"), true);
 
     // Test universal logger
-    log_both!(info, "🚀 GPU Temperature Monitor v0.1.0 starting up", Some(serde_json::json!({
-        "version": "0.1.0",
-        "startup_time": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
-    })));
+    log_both!(
+        info,
+        "🚀 GPU Temperature Monitor v0.1.0 starting up",
+        Some(serde_json::json!({
+            "version": "0.1.0",
+            "startup_time": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+        }))
+    );
 
     // Handle command line arguments
     let args: Vec<String> = env::args().collect();
@@ -159,7 +163,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Send startup notification
-    notification_manager.send_status_notification("GPU Temperature Monitor started").await?;
+    notification_manager
+        .send_status_notification("GPU Temperature Monitor started")
+        .await?;
 
     // Send startup toast notification
     #[cfg(debug_assertions)]
@@ -239,7 +245,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = std::fs::write(&log_path, "Log file created\n");
                         }
 
-                        if let Err(e) = crate::gui::GuiDialogs::open_file(&log_path.to_string_lossy()) {
+                        if let Err(e) =
+                            crate::gui::GuiDialogs::open_file(&log_path.to_string_lossy())
+                        {
                             let _ = notification_manager.send_status_notification_sync(&format!(
                                 "❌ Failed to open log file: {}",
                                 e
@@ -252,7 +260,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .unwrap_or_default()
                             .join("config.json");
 
-                        if let Err(e) = crate::gui::GuiDialogs::open_file(&config_path.to_string_lossy()) {
+                        if let Err(e) =
+                            crate::gui::GuiDialogs::open_file(&config_path.to_string_lossy())
+                        {
                             let _ = notification_manager.send_status_notification_sync(&format!(
                                 "❌ Failed to open config file: {}",
                                 e
@@ -349,11 +359,7 @@ async fn monitor_temperatures(
         println!("{} {}: {:.1}°C", status_icon, reading.sensor_name, temp);
 
         // Log to file
-        let _ = file_logger.log_temperature_reading(
-            &reading.sensor_name,
-            temp,
-            threshold,
-        );
+        let _ = file_logger.log_temperature_reading(&reading.sensor_name, temp, threshold);
     }
 
     // Update GUI manager with current temperature
@@ -392,18 +398,11 @@ async fn monitor_temperatures(
         let cooldown_level = notification_manager.cooldown_level;
 
         // Log alert to file
-        let _ = file_logger.log_alert(
-            &hottest_sensor,
-            max_temp,
-            threshold,
-            cooldown_level,
-        );
+        let _ = file_logger.log_alert(&hottest_sensor, max_temp, threshold, cooldown_level);
 
-        notification_manager.send_temperature_alert(
-            &hottest_sensor,
-            max_temp,
-            threshold,
-        ).await?;
+        notification_manager
+            .send_temperature_alert(&hottest_sensor, max_temp, threshold)
+            .await?;
     }
 
     Ok(())
@@ -430,4 +429,3 @@ fn print_help() {
     println!("Configuration file: ./config.json");
     println!("Log file: ./Logs/GpuTempWatch.log");
 }
-

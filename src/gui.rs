@@ -1,15 +1,15 @@
-use tracing::{info, warn};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+use tracing::{info, warn};
 
 use windows::{
+    core::PCWSTR,
+    Win32::Foundation::HWND,
     Win32::UI::Shell::ShellExecuteW,
     Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_ICONWARNING,
-        MB_OK, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, SW_SHOWNORMAL
+        MB_OK, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, SW_SHOWNORMAL,
     },
-    Win32::Foundation::HWND,
-    core::PCWSTR,
 };
 
 pub struct GuiDialogs;
@@ -193,7 +193,11 @@ impl GuiDialogs {
     }
 
     #[cfg(windows)]
-    fn show_message_box_with_result(title: &str, message: &str, icon_type: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
+    fn show_message_box_with_result(
+        title: &str,
+        message: &str,
+        icon_type: MESSAGEBOX_STYLE,
+    ) -> MESSAGEBOX_RESULT {
         unsafe {
             let title_wide = Self::to_wide_string(title);
             let message_wide = Self::to_wide_string(message);

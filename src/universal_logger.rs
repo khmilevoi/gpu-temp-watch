@@ -4,7 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use tracing::{error, info, warn, debug};
+use tracing::{debug, error, info, warn};
 
 /// Универсальный логгер для одновременного вывода в консоль и файл
 pub struct UniversalLogger {
@@ -20,7 +20,13 @@ impl UniversalLogger {
         }
     }
 
-    pub fn log(&self, level: LogLevel, module: &str, message: &str, context: Option<serde_json::Value>) {
+    pub fn log(
+        &self,
+        level: LogLevel,
+        module: &str,
+        message: &str,
+        context: Option<serde_json::Value>,
+    ) {
         if !self.enabled {
             return;
         }
@@ -56,7 +62,11 @@ impl UniversalLogger {
         }
     }
 
-    fn write_to_file(&self, file_path: &PathBuf, log_entry: &serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_to_file(
+        &self,
+        file_path: &PathBuf,
+        log_entry: &serde_json::Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Ensure parent directory exists
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -68,7 +78,6 @@ impl UniversalLogger {
             .open(file_path)?;
 
         writeln!(file, "{}", log_entry.to_string())?;
-        file.sync_all()?; // Force write to disk
         Ok(())
     }
 }
@@ -97,7 +106,8 @@ pub static GLOBAL_LOGGER: OnceLock<Arc<Mutex<UniversalLogger>>> = OnceLock::new(
 /// Initialize the global logger
 pub fn init_logger(file_path: Option<&str>, enabled: bool) {
     let logger = UniversalLogger::new(file_path, enabled);
-    GLOBAL_LOGGER.set(Arc::new(Mutex::new(logger)))
+    GLOBAL_LOGGER
+        .set(Arc::new(Mutex::new(logger)))
         .map_err(|_| "Logger already initialized")
         .unwrap();
 }
@@ -132,7 +142,7 @@ macro_rules! log_both {
                     $crate::universal_logger::LogLevel::Error,
                     module_path!(),
                     $msg,
-                    $context
+                    $context,
                 );
             }
         }
@@ -148,7 +158,7 @@ macro_rules! log_both {
                     $crate::universal_logger::LogLevel::Warn,
                     module_path!(),
                     $msg,
-                    $context
+                    $context,
                 );
             }
         }
@@ -164,7 +174,7 @@ macro_rules! log_both {
                     $crate::universal_logger::LogLevel::Info,
                     module_path!(),
                     $msg,
-                    $context
+                    $context,
                 );
             }
         }
@@ -180,7 +190,7 @@ macro_rules! log_both {
                     $crate::universal_logger::LogLevel::Debug,
                     module_path!(),
                     $msg,
-                    $context
+                    $context,
                 );
             }
         }

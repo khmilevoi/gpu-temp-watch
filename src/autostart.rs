@@ -1,6 +1,6 @@
-use tracing::info;
 use std::env;
 use std::path::PathBuf;
+use tracing::info;
 use windows::{core::*, Win32::Foundation::*, Win32::System::Registry::*};
 
 pub struct AutoStart {
