@@ -78,6 +78,7 @@ pub type SharedState = Arc<RwLock<AppState>>;
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub config: Config,
+    pub config_handle: Arc<RwLock<Config>>,
     pub current_temperature: f32,
     pub monitoring_paused: bool,
     pub autostart_enabled: bool,
@@ -87,12 +88,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config) -> (Self, broadcast::Receiver<WebSocketMessage>) {
+    pub fn new(
+        shared_config: Arc<RwLock<Config>>,
+    ) -> (Self, broadcast::Receiver<WebSocketMessage>) {
         let autostart_enabled = AutoStart::new().map(|a| a.is_installed()).unwrap_or(false);
         let (broadcast_tx, broadcast_rx) = broadcast::channel(100);
 
+        let config = shared_config.read().unwrap().clone();
+
         let state = Self {
             config,
+            config_handle: Arc::clone(&shared_config),
             current_temperature: 0.0,
             monitoring_paused: false,
             autostart_enabled,
@@ -163,8 +169,8 @@ pub struct WebServer {
 }
 
 impl WebServer {
-    pub fn new(config: Config, port: u16) -> Self {
-        let (app_state, _) = AppState::new(config);
+    pub fn new(shared_config: Arc<RwLock<Config>>, port: u16) -> Self {
+        let (app_state, _) = AppState::new(Arc::clone(&shared_config));
         let shared_state = Arc::new(RwLock::new(app_state));
 
         Self { shared_state, port }
@@ -355,19 +361,19 @@ async fn update_config(
     );
 
     // Convert web config to internal config
-    let new_config: crate::config::Config = web_config.into();
+    let updated_config: crate::config::Config = web_config.into();
 
     // Validate new configuration
-    if let Err(e) = new_config.validate() {
+    if let Err(e) = updated_config.validate() {
         log_both!(
             warn,
             "⚠️ Configuration validation failed",
             Some(serde_json::json!({
                 "validation_error": e.to_string(),
                 "rejected_config": {
-                    "temperature_threshold_c": new_config.temperature_threshold_c,
-                    "poll_interval_sec": new_config.poll_interval_sec,
-                    "base_cooldown_sec": new_config.base_cooldown_sec
+                    "temperature_threshold_c": updated_config.temperature_threshold_c,
+                    "poll_interval_sec": updated_config.poll_interval_sec,
+                    "base_cooldown_sec": updated_config.base_cooldown_sec
                 }
             }))
         );
@@ -378,13 +384,39 @@ async fn update_config(
         }));
     }
 
-    // Update the config in memory
-    app_state.config = new_config;
+    let previous_snapshot = app_state.config.clone();
 
+    {
+        let mut config_guard = match app_state.config_handle.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                log_both!(
+                    error,
+                    "❌ Failed to update shared configuration state",
+                    Some(serde_json::json!({
+                        "error": e.to_string()
+                    }))
+                );
+
+                return Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to update shared configuration: {}", e)
+                }));
+            }
+        };
+
+        *config_guard = updated_config.clone();
+    }
+
+    app_state.config = updated_config.clone();
     log_both!(info, "✅ Configuration updated in memory", None);
 
     // Save to file with detailed logging
     if let Err(e) = app_state.config.save() {
+        if let Ok(mut config_guard) = app_state.config_handle.write() {
+            *config_guard = previous_snapshot.clone();
+        }
+        app_state.config = previous_snapshot;
         log_both!(
             error,
             "❌ Failed to persist configuration to file",

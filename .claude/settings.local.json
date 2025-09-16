@@ -18,7 +18,9 @@
       "Bash(.targetreleasegpu-temp-watch.exe:*)",
       "Bash(\"./target/release/gpu-temp-watch.exe\" --help)",
       "Bash(\"./target/release/gpu-temp-watch.exe\" --status)",
-      "Bash(start:*)"
+      "Bash(start:*)",
+      "Bash(reg query:*)",
+      "Read(//c/Users/Khmil/OneDrive/Изображения/Screenshots/**)"
     ],
     "deny": [],
     "ask": []

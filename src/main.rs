@@ -12,7 +12,7 @@ mod web_server;
 
 use autostart::AutoStart;
 use config::Config;
-use gui::{GuiDialogs, GuiManager};
+use gui::GuiManager;
 use logging::FileLogger;
 use monitor::TempMonitor;
 use notifications::NotificationManager;
@@ -189,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut gui_manager = GuiManager::new();
 
     // Initialize and start web server
-    let web_server = WebServer::new(shared_config.read().unwrap().clone(), 18235);
+    let web_server = WebServer::new(shared_config.clone(), 18235);
     let web_state = web_server.get_state();
 
     // Start web server in background
@@ -293,7 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Show GUI error dialog for critical errors
                     #[cfg(debug_assertions)]
-                    GuiDialogs::show_warning(
+                    crate::gui::GuiDialogs::show_warning(
                         "Monitoring Warning",
                         &format!(
                             "⚠️ Monitoring error occurred:\n\n{}\n\nMonitoring will continue...",
