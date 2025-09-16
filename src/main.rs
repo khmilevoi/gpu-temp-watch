@@ -7,19 +7,21 @@ mod logging;
 mod monitor;
 mod notifications;
 mod tray;
+mod universal_logger;
 mod web_server;
 
 use autostart::AutoStart;
 use config::Config;
 use gui::{GuiDialogs, GuiManager};
 use logging::FileLogger;
-use monitor::{GpuTempReading, TempMonitor};
+use monitor::TempMonitor;
 use notifications::NotificationManager;
 use tray::{SystemTray, TrayMessage};
 use web_server::{open_browser, WebServer};
 
-use log::{info, warn};
+use tracing::{info, warn};
 use std::env;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -28,13 +30,28 @@ fn debug_print(msg: &str) {
     println!("{}", msg);
 
     #[cfg(not(debug_assertions))]
-    log::info!("{}", msg);
+    info!("{}", msg);
 }
 
+#[tracing::instrument]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    env_logger::init();
+    // Initialize structured logging
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_level(true)
+        .json()
+        .init();
+
+    // Initialize universal logger for dual output (console + file)
+    universal_logger::init_logger(Some("./Logs/GpuTempWatch_detailed.log"), true);
+
+    // Test universal logger
+    log_both!(info, "🚀 GPU Temperature Monitor v0.1.0 starting up", Some(serde_json::json!({
+        "version": "0.1.0",
+        "startup_time": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    })));
 
     // Handle command line arguments
     let args: Vec<String> = env::args().collect();
@@ -102,14 +119,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("⚠️ Failed to create autostart manager: {:?}", e),
     }
 
-    // Load configuration
+    // Load configuration and wrap in Arc<RwLock> for shared access
     let config = Config::load_or_create()?;
     config.validate()?;
+    let shared_config = Arc::new(RwLock::new(config));
 
     // Initialize components
     let temp_monitor = TempMonitor::new();
     let mut notification_manager = NotificationManager::new();
-    let file_logger = FileLogger::new(&config)?;
+    let file_logger = FileLogger::new(&shared_config.read().unwrap())?;
     let mut system_tray = match SystemTray::new() {
         Ok(tray) => {
             println!("✅ System tray initialized successfully");
@@ -117,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("❌ Failed to create system tray: {}", e);
-            let _ = notification_manager.send_status_notification(&format!(
+            let _ = notification_manager.send_status_notification_sync(&format!(
                 "❌ System Tray Error: {}. Continuing without tray integration.",
                 e
             ));
@@ -135,34 +153,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Send error notification and exit
             let _ = notification_manager
-                .send_status_notification(&format!("❌ NVML Connection Error: {}", e));
+                .send_status_notification_sync(&format!("❌ NVML Connection Error: {}", e));
             return Err(e);
         }
     }
 
     // Send startup notification
-    notification_manager.send_status_notification("GPU Temperature Monitor started")?;
+    notification_manager.send_status_notification("GPU Temperature Monitor started").await?;
 
     // Send startup toast notification
     #[cfg(debug_assertions)]
     {
-        let _ = notification_manager.send_status_notification(
+        let _ = notification_manager.send_status_notification_sync(
             "🚀 GPU Temperature Monitor started successfully! Right-click tray icon for options.",
         );
     }
 
-    println!(
-        "🌡️  Temperature threshold: {:.1}°C",
-        config.temperature_threshold_c
-    );
-    println!("⏱️  Poll interval: {}s", config.poll_interval_sec);
+    {
+        let config = shared_config.read().unwrap();
+        println!(
+            "🌡️  Temperature threshold: {:.1}°C",
+            config.temperature_threshold_c
+        );
+        println!("⏱️  Poll interval: {}s", config.poll_interval_sec);
+    }
     println!("🔄 Starting monitoring loop...");
 
-    let mut monitoring_paused = false;
+    let monitoring_paused = false;
     let mut gui_manager = GuiManager::new();
 
     // Initialize and start web server
-    let web_server = WebServer::new(config.clone(), 18235);
+    let web_server = WebServer::new(shared_config.read().unwrap().clone(), 18235);
     let web_state = web_server.get_state();
 
     // Start web server in background
@@ -180,127 +201,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Main monitoring loop
     loop {
         // Handle system tray messages
-        if let Some(ref tray) = system_tray {
+        if let Some(ref mut tray) = system_tray {
             if let Some(message) = tray.get_message() {
                 println!("📬 Received tray message: {:?}", message);
                 match message {
-                    TrayMessage::Exit => {
-                        println!("🚪 Exiting via system tray");
+                    TrayMessage::QuitMonitor => {
+                        println!("🚪 Quitting monitor via system tray");
                         return Ok(());
                     }
-                    TrayMessage::Pause => {
-                        println!("⏸️ Monitoring paused");
-                        monitoring_paused = true;
-                        gui_manager.set_monitoring_paused(true);
-                        // Send toast notification instead of modal dialog
-                        let _ = notification_manager
-                            .send_status_notification("⏸️ GPU monitoring paused");
-                    }
-                    TrayMessage::Resume => {
-                        println!("▶️ Monitoring resumed");
-                        monitoring_paused = false;
-                        gui_manager.set_monitoring_paused(false);
-                        // Send toast notification instead of modal dialog
-                        let _ = notification_manager
-                            .send_status_notification("▶️ GPU monitoring resumed");
-                    }
-                    TrayMessage::Settings => {
-                        println!("⚙️ Settings clicked");
-                        let settings_msg = format!("🔧 Current Settings:\n\n🌡️ Temperature Threshold: {:.1}°C\n⏱️ Poll Interval: {}s\n\n💡 Edit config.json to change settings", config.temperature_threshold_c, config.poll_interval_sec);
-                        let _ = notification_manager.send_status_notification(&settings_msg);
-                    }
-                    TrayMessage::OpenWebInterface => {
-                        println!("🌐 Opening web interface...");
-                        info!("Tray request: open web interface");
+                    TrayMessage::OpenDashboard => {
+                        println!("🌐 Opening dashboard...");
+                        info!("Tray request: open dashboard");
                         if let Err(e) = open_browser("http://localhost:18235") {
-                            warn!("Failed to open web interface: {}", e);
-                            let _ = notification_manager.send_status_notification(&format!(
-                                "❌ Failed to open web interface: {}",
+                            warn!("Failed to open dashboard: {}", e);
+                            let _ = notification_manager.send_status_notification_sync(&format!(
+                                "❌ Failed to open dashboard: {}",
                                 e
                             ));
                         } else {
-                            info!("Web interface launched in default browser");
+                            info!("Dashboard launched in default browser");
                             let _ = notification_manager
-                                .send_status_notification("🌐 Web interface opened in browser");
+                                .send_status_notification_sync("🌐 Dashboard opened in browser");
                         }
                     }
-                    TrayMessage::ShowLogs => {
-                        println!("📋 Show logs clicked");
-                        if let Some(log_path) = &config.log_file_path {
-                            if let Err(e) = GuiDialogs::open_file(log_path) {
-                                let _ = notification_manager.send_status_notification(&format!(
-                                    "❌ Failed to open log file: {}",
-                                    e
-                                ));
+                    TrayMessage::ViewLogs => {
+                        println!("📋 View logs clicked");
+                        let log_path = std::env::current_dir()
+                            .unwrap_or_default()
+                            .join("Logs")
+                            .join("GpuTempWatch.log");
+
+                        // Ensure log file exists before trying to open
+                        if !log_path.exists() {
+                            if let Some(parent) = log_path.parent() {
+                                let _ = std::fs::create_dir_all(parent);
                             }
-                        } else {
-                            let _ = notification_manager
-                                .send_status_notification("⚠️ Log file path not configured");
+                            let _ = std::fs::write(&log_path, "Log file created\n");
+                        }
+
+                        if let Err(e) = crate::gui::GuiDialogs::open_file(&log_path.to_string_lossy()) {
+                            let _ = notification_manager.send_status_notification_sync(&format!(
+                                "❌ Failed to open log file: {}",
+                                e
+                            ));
                         }
                     }
-                    TrayMessage::About => {
-                        println!("ℹ️ About clicked");
-                        let about_msg = "🚀 GPU Temperature Monitor v0.1.0\n\nReal-time GPU temperature monitoring with notifications and system tray integration.\n\n💡 Right-click tray icon for options";
-                        let _ = notification_manager.send_status_notification(about_msg);
-                    }
-                    TrayMessage::OpenConfig => {
-                        println!("📂 Open config clicked");
-                        if let Err(e) = GuiDialogs::open_file("./config.json") {
-                            let _ = notification_manager.send_status_notification(&format!(
+                    TrayMessage::EditSettings => {
+                        println!("⚙️ Edit settings clicked");
+                        let config_path = std::env::current_dir()
+                            .unwrap_or_default()
+                            .join("config.json");
+
+                        if let Err(e) = crate::gui::GuiDialogs::open_file(&config_path.to_string_lossy()) {
+                            let _ = notification_manager.send_status_notification_sync(&format!(
                                 "❌ Failed to open config file: {}",
                                 e
                             ));
-                        }
-                    }
-                    TrayMessage::OpenLogsFolder => {
-                        println!("📁 Open logs folder clicked");
-                        if let Err(e) = GuiDialogs::open_folder("./Logs") {
-                            let _ = notification_manager.send_status_notification(&format!(
-                                "❌ Failed to open logs folder: {}",
-                                e
-                            ));
-                        }
-                    }
-                    TrayMessage::InstallAutostart => {
-                        println!("⚙️ Installing autostart...");
-                        match AutoStart::new() {
-                            Ok(autostart) => match autostart.install() {
-                                Ok(_) => {
-                                    let _ = notification_manager.send_status_notification("✅ Autostart installed! Application will start automatically with Windows.");
-                                }
-                                Err(e) => {
-                                    let _ = notification_manager.send_status_notification(
-                                        &format!("❌ Failed to install autostart: {:?}", e),
-                                    );
-                                }
-                            },
-                            Err(e) => {
-                                let _ = notification_manager.send_status_notification(&format!(
-                                    "❌ Failed to create autostart: {:?}",
-                                    e
-                                ));
-                            }
-                        }
-                    }
-                    TrayMessage::UninstallAutostart => {
-                        println!("🗑️ Removing autostart...");
-                        match AutoStart::new() {
-                            Ok(autostart) => match autostart.uninstall() {
-                                Ok(_) => {
-                                    let _ = notification_manager.send_status_notification("✅ Autostart removed! Application will no longer start with Windows.");
-                                }
-                                Err(e) => {
-                                    let _ = notification_manager.send_status_notification(
-                                        &format!("❌ Failed to remove autostart: {:?}", e),
-                                    );
-                                }
-                            },
-                            Err(e) => {
-                                let _ = notification_manager.send_status_notification(&format!(
-                                    "❌ Failed to create autostart: {:?}",
-                                    e
-                                ));
-                            }
                         }
                     }
                 }
@@ -312,7 +268,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match monitor_temperatures(
                 &temp_monitor,
                 &mut notification_manager,
-                &config,
+                &shared_config,
                 &mut system_tray,
                 &file_logger,
                 &mut gui_manager,
@@ -341,20 +297,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Update web state
-        {
+        let poll_interval = {
+            let config = shared_config.read().unwrap();
             let mut state = web_state.write().unwrap();
             state.monitoring_paused = monitoring_paused;
             state.uptime_seconds += config.poll_interval_sec;
-        }
+            config.poll_interval_sec
+        };
 
-        sleep(Duration::from_secs(config.poll_interval_sec)).await;
+        sleep(Duration::from_secs(poll_interval)).await;
     }
 }
 
+#[tracing::instrument(skip_all)]
 async fn monitor_temperatures(
     temp_monitor: &TempMonitor,
     notification_manager: &mut NotificationManager,
-    config: &Config,
+    shared_config: &Arc<RwLock<Config>>,
     system_tray: &mut Option<SystemTray>,
     file_logger: &FileLogger,
     gui_manager: &mut GuiManager,
@@ -371,9 +330,11 @@ async fn monitor_temperatures(
     let mut max_temp = 0.0f32;
     let mut hottest_sensor = String::new();
 
+    let threshold = shared_config.read().unwrap().temperature_threshold_c;
+
     for reading in &gpu_temps {
         let temp = reading.temperature;
-        let exceeds_threshold = temp > config.temperature_threshold_c;
+        let exceeds_threshold = temp > threshold;
 
         if exceeds_threshold {
             any_over_threshold = true;
@@ -391,7 +352,7 @@ async fn monitor_temperatures(
         let _ = file_logger.log_temperature_reading(
             &reading.sensor_name,
             temp,
-            config.temperature_threshold_c,
+            threshold,
         );
     }
 
@@ -402,11 +363,11 @@ async fn monitor_temperatures(
     {
         let mut state = web_state.write().unwrap();
         state.current_temperature = max_temp;
-        state.config = config.clone();
+        state.config = shared_config.read().unwrap().clone();
 
         // Add temperature reading to web logs
         for reading in &gpu_temps {
-            let level = if reading.temperature > config.temperature_threshold_c {
+            let level = if reading.temperature > threshold {
                 "WARN"
             } else {
                 "INFO"
@@ -414,11 +375,14 @@ async fn monitor_temperatures(
             let message = format!("{}: {:.1}°C", reading.sensor_name, reading.temperature);
             state.add_log(level, &message);
         }
+
+        // Broadcast temperature update to WebSocket clients
+        state.broadcast_temperature_update();
     }
 
     // Update system tray icon based on temperature
     if let Some(ref mut tray) = system_tray {
-        if let Err(e) = tray.update_icon_for_temperature(max_temp, config.temperature_threshold_c) {
+        if let Err(e) = tray.update_icon_for_temperature(max_temp, threshold) {
             warn!("⚠️  Failed to update tray icon: {}", e);
         }
     }
@@ -431,15 +395,15 @@ async fn monitor_temperatures(
         let _ = file_logger.log_alert(
             &hottest_sensor,
             max_temp,
-            config.temperature_threshold_c,
+            threshold,
             cooldown_level,
         );
 
         notification_manager.send_temperature_alert(
             &hottest_sensor,
             max_temp,
-            config.temperature_threshold_c,
-        )?;
+            threshold,
+        ).await?;
     }
 
     Ok(())
@@ -467,25 +431,3 @@ fn print_help() {
     println!("Log file: ./Logs/GpuTempWatch.log");
 }
 
-fn print_gpu_status(readings: &[GpuTempReading], threshold: f32) {
-    println!("\n📊 GPU Temperature Status:");
-    for reading in readings {
-        let status = if reading.temperature > threshold {
-            "🔥 HOT"
-        } else if reading.temperature > threshold - 10.0 {
-            "🟡 WARM"
-        } else {
-            "🟢 COOL"
-        };
-
-        println!(
-            "  {} {}: {:.1}°C (Min: {:.1}°C, Max: {:.1}°C)",
-            status,
-            reading.sensor_name,
-            reading.temperature,
-            reading.min_temp.unwrap_or(0.0),
-            reading.max_temp.unwrap_or(0.0)
-        );
-    }
-    println!();
-}

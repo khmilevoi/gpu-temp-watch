@@ -1,4 +1,4 @@
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use nvml_wrapper::Nvml;
 use std::error::Error;
 
@@ -29,6 +29,7 @@ impl TempMonitor {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_gpu_temperatures(&self) -> Result<Vec<GpuTempReading>, Box<dyn Error>> {
         let nvml = match &self.nvml {
             Some(nvml) => nvml,
@@ -79,6 +80,7 @@ impl TempMonitor {
         Ok(gpu_temps)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn test_connection(&self) -> Result<(), Box<dyn Error>> {
         match &self.nvml {
             Some(nvml) => {

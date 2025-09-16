@@ -14,7 +14,11 @@
       "Bash(rustup:*)",
       "Bash(./target/release/gpu-temp-watch.exe --status)",
       "Bash(./target/release/gpu-temp-watch.exe --install)",
-      "Bash(move:*)"
+      "Bash(move:*)",
+      "Bash(.targetreleasegpu-temp-watch.exe:*)",
+      "Bash(\"./target/release/gpu-temp-watch.exe\" --help)",
+      "Bash(\"./target/release/gpu-temp-watch.exe\" --status)",
+      "Bash(start:*)"
     ],
     "deny": [],
     "ask": []

@@ -41,21 +41,127 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::log_both;
+
         let config_path = Self::get_config_path();
 
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
+        log_both!(info, "💾 Starting configuration save process", Some(serde_json::json!({
+            "config_path": config_path.to_string_lossy(),
+            "config_data": {
+                "temperature_threshold_c": self.temperature_threshold_c,
+                "poll_interval_sec": self.poll_interval_sec,
+                "base_cooldown_sec": self.base_cooldown_sec,
+                "enable_logging": self.enable_logging,
+                "log_file_path": self.log_file_path
+            }
+        })));
+
+        // Validate configuration before saving
+        if let Err(e) = self.validate() {
+            log_both!(error, "❌ Configuration validation failed before saving", Some(serde_json::json!({
+                "error": e.to_string(),
+                "config_path": config_path.to_string_lossy()
+            })));
+            return Err(e);
         }
 
-        let config_str = serde_json::to_string_pretty(self)?;
-        fs::write(&config_path, config_str)?;
-        println!("💾 Config saved to: {:?}", config_path);
-        Ok(())
+        // Check if parent directory exists and create if necessary
+        if let Some(parent) = config_path.parent() {
+            if !parent.exists() {
+                log_both!(info, "📁 Creating parent directory for config", Some(serde_json::json!({
+                    "parent_dir": parent.to_string_lossy()
+                })));
+
+                if let Err(e) = fs::create_dir_all(parent) {
+                    log_both!(error, "❌ Failed to create parent directory", Some(serde_json::json!({
+                        "parent_dir": parent.to_string_lossy(),
+                        "error": e.to_string()
+                    })));
+                    return Err(e.into());
+                }
+            }
+        }
+
+        // Check file permissions before writing
+        if config_path.exists() {
+            let metadata = fs::metadata(&config_path)?;
+            log_both!(debug, "📄 Existing config file metadata", Some(serde_json::json!({
+                "file_size": metadata.len(),
+                "readonly": metadata.permissions().readonly(),
+                "modified": metadata.modified().map(|t| format!("{:?}", t)).unwrap_or_else(|_| "unknown".to_string())
+            })));
+
+            if metadata.permissions().readonly() {
+                log_both!(error, "❌ Config file is read-only", Some(serde_json::json!({
+                    "config_path": config_path.to_string_lossy()
+                })));
+                return Err("Configuration file is read-only".into());
+            }
+        }
+
+        // Serialize configuration to JSON
+        let config_str = match serde_json::to_string_pretty(self) {
+            Ok(json_str) => {
+                log_both!(debug, "✅ Configuration serialized to JSON", Some(serde_json::json!({
+                    "json_length": json_str.len()
+                })));
+                json_str
+            }
+            Err(e) => {
+                log_both!(error, "❌ Failed to serialize configuration to JSON", Some(serde_json::json!({
+                    "error": e.to_string()
+                })));
+                return Err(e.into());
+            }
+        };
+
+        // Write to file
+        match fs::write(&config_path, &config_str) {
+            Ok(_) => {
+                log_both!(info, "✅ Configuration saved successfully", Some(serde_json::json!({
+                    "config_path": config_path.to_string_lossy(),
+                    "file_size": config_str.len()
+                })));
+
+                // Verify the file was written correctly
+                match fs::read_to_string(&config_path) {
+                    Ok(read_back) => {
+                        if read_back == config_str {
+                            log_both!(debug, "✅ File verification successful", None);
+                        } else {
+                            log_both!(warn, "⚠️ File verification failed - content mismatch", Some(serde_json::json!({
+                                "expected_length": config_str.len(),
+                                "actual_length": read_back.len()
+                            })));
+                        }
+                    }
+                    Err(e) => {
+                        log_both!(warn, "⚠️ Could not verify saved file", Some(serde_json::json!({
+                            "error": e.to_string()
+                        })));
+                    }
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                log_both!(error, "❌ Failed to write configuration file", Some(serde_json::json!({
+                    "config_path": config_path.to_string_lossy(),
+                    "error": e.to_string(),
+                    "error_kind": format!("{:?}", e.kind())
+                })));
+                Err(e.into())
+            }
+        }
     }
 
     fn get_config_path() -> PathBuf {
-        PathBuf::from("./config.json")
+        // Use absolute path to avoid working directory issues
+        if let Ok(current_dir) = std::env::current_dir() {
+            current_dir.join("config.json")
+        } else {
+            PathBuf::from("./config.json")
+        }
     }
 
     pub fn update_threshold(

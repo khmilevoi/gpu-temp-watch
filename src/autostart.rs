@@ -1,4 +1,4 @@
-use log::info;
+use tracing::info;
 use std::env;
 use std::path::PathBuf;
 use windows::{core::*, Win32::Foundation::*, Win32::System::Registry::*};

@@ -1,11 +1,11 @@
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 use std::error::Error;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tray_icon::Icon;
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuId, MenuItem, MenuItemKind, PredefinedMenuItem},
+    menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
     MouseButton, TrayIconBuilder, TrayIconEvent,
 };
 use windows::Win32::Foundation::HWND;
@@ -17,31 +17,18 @@ use image::RgbaImage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayMessage {
-    Exit,
-    Pause,
-    Resume,
-    Settings,
-    ShowLogs,
-    InstallAutostart,
-    UninstallAutostart,
-    About,
-    OpenConfig,
-    OpenLogsFolder,
-    OpenWebInterface,
+    OpenDashboard,
+    ViewLogs,
+    EditSettings,
+    QuitMonitor,
 }
 
 fn menu_id_to_message(id: &str) -> Option<TrayMessage> {
     match id {
-        "about" => Some(TrayMessage::About),
-        "pause" => Some(TrayMessage::Pause),
-        "resume" => Some(TrayMessage::Resume),
-        "settings" => Some(TrayMessage::OpenWebInterface),
-        "show_logs" => Some(TrayMessage::ShowLogs),
-        "open_config" => Some(TrayMessage::OpenConfig),
-        "open_logs_folder" => Some(TrayMessage::OpenLogsFolder),
-        "autostart_install" => Some(TrayMessage::InstallAutostart),
-        "autostart_remove" => Some(TrayMessage::UninstallAutostart),
-        "exit" => Some(TrayMessage::Exit),
+        "open_dashboard" => Some(TrayMessage::OpenDashboard),
+        "view_logs" => Some(TrayMessage::ViewLogs),
+        "edit_settings" => Some(TrayMessage::EditSettings),
+        "quit_monitor" => Some(TrayMessage::QuitMonitor),
         _ => None,
     }
 }
@@ -68,6 +55,7 @@ pub struct SystemTray {
     receiver: mpsc::Receiver<TrayMessage>,
     current_icon_state: IconState,
     thread_handle: Option<JoinHandle<()>>,
+    last_message: Option<(TrayMessage, std::time::Instant)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,12 +101,24 @@ impl SystemTray {
             receiver: event_receiver,
             current_icon_state: IconState::Cool,
             thread_handle: Some(tray_thread),
+            last_message: None,
         })
     }
 
-    pub fn get_message(&self) -> Option<TrayMessage> {
+    pub fn get_message(&mut self) -> Option<TrayMessage> {
         match self.receiver.try_recv() {
             Ok(message) => {
+                let now = std::time::Instant::now();
+
+                // Check for duplicate message within 500ms
+                if let Some((last_msg, last_time)) = &self.last_message {
+                    if *last_msg == message && now.duration_since(*last_time).as_millis() < 500 {
+                        // Skip duplicate message
+                        return None;
+                    }
+                }
+
+                self.last_message = Some((message.clone(), now));
                 println!("📬 Received tray message: {:?}", message);
                 Some(message)
             }
@@ -284,8 +284,8 @@ fn run_tray_event_loop(
         }
         TrayIconEvent::DoubleClick { .. } => {
             println!("🖱️ Double click detected on tray icon");
-            info!("Tray icon double-clicked, opening web interface");
-            if let Err(e) = click_sender.send(TrayMessage::OpenWebInterface) {
+            info!("Tray icon double-clicked, opening dashboard");
+            if let Err(e) = click_sender.send(TrayMessage::OpenDashboard) {
                 warn!("❌ Failed to send double-click message: {}", e);
             }
         }
@@ -294,79 +294,47 @@ fn run_tray_event_loop(
 
     let menu = Menu::new();
 
-    let about_item = MenuItem::with_id(
-        MenuId::new("about"),
-        "🌡️ GPU Temperature Monitor",
+    // Simplified menu with only 4 essential items
+    let dashboard_item = MenuItem::with_id(
+        MenuId::new("open_dashboard"),
+        "🌐 Open Dashboard",
         true,
         None,
     );
-    let separator1 = PredefinedMenuItem::separator();
-    let pause_item = MenuItem::with_id(MenuId::new("pause"), "⏸️ Pause Monitoring", true, None);
-    let resume_item = MenuItem::with_id(MenuId::new("resume"), "▶️ Resume Monitoring", true, None);
-    let separator2 = PredefinedMenuItem::separator();
-    let settings_item = MenuItem::with_id(MenuId::new("settings"), "⚙️ Settings", true, None);
-    let logs_item = MenuItem::with_id(MenuId::new("show_logs"), "📋 Show Logs", true, None);
-    let config_item = MenuItem::with_id(
-        MenuId::new("open_config"),
-        "📂 Open Config File",
+    let logs_item = MenuItem::with_id(
+        MenuId::new("view_logs"),
+        "📋 View Logs",
         true,
         None,
     );
-    let logs_folder_item = MenuItem::with_id(
-        MenuId::new("open_logs_folder"),
-        "📁 Open Logs Folder",
+    let settings_item = MenuItem::with_id(
+        MenuId::new("edit_settings"),
+        "⚙️ Edit Settings",
         true,
         None,
     );
-    let separator3 = PredefinedMenuItem::separator();
-    let autostart_install_item = MenuItem::with_id(
-        MenuId::new("autostart_install"),
-        "🔧 Install Autostart",
+    let separator = PredefinedMenuItem::separator();
+    let quit_item = MenuItem::with_id(
+        MenuId::new("quit_monitor"),
+        "❌ Quit Monitor",
         true,
         None,
     );
-    let autostart_remove_item = MenuItem::with_id(
-        MenuId::new("autostart_remove"),
-        "🗑️ Remove Autostart",
-        true,
-        None,
-    );
-    let separator4 = PredefinedMenuItem::separator();
-    let exit_item = MenuItem::with_id(MenuId::new("exit"), "❌ Exit", true, None);
 
     menu.append_items(&[
-        &about_item,
-        &separator1,
-        &pause_item,
-        &resume_item,
-        &separator2,
-        &settings_item,
+        &dashboard_item,
         &logs_item,
-        &config_item,
-        &logs_folder_item,
-        &separator3,
-        &autostart_install_item,
-        &autostart_remove_item,
-        &separator4,
-        &exit_item,
+        &settings_item,
+        &separator,
+        &quit_item,
     ])?;
 
     // Keep menu handles alive for the lifetime of the tray thread
     let _menu_handles = vec![
-        MenuItemKind::MenuItem(about_item.clone()),
-        MenuItemKind::Predefined(separator1.clone()),
-        MenuItemKind::MenuItem(pause_item.clone()),
-        MenuItemKind::MenuItem(resume_item.clone()),
-        MenuItemKind::Predefined(separator2.clone()),
-        MenuItemKind::MenuItem(settings_item.clone()),
-        MenuItemKind::MenuItem(logs_item.clone()),
-        MenuItemKind::MenuItem(config_item.clone()),
-        MenuItemKind::MenuItem(logs_folder_item.clone()),
-        MenuItemKind::Predefined(separator3.clone()),
-        MenuItemKind::MenuItem(autostart_install_item.clone()),
-        MenuItemKind::MenuItem(autostart_remove_item.clone()),
-        MenuItemKind::Predefined(separator4.clone()),
-        MenuItemKind::MenuItem(exit_item.clone()),
+        dashboard_item.clone(),
+        logs_item.clone(),
+        settings_item.clone(),
+        quit_item.clone(),
     ];
 
     let icon = match SystemTray::load_icon_for_state(&IconState::Cool) {
@@ -456,13 +424,10 @@ mod tests {
 
     #[test]
     fn maps_known_menu_ids() {
-        assert_eq!(menu_id_to_message("about"), Some(TrayMessage::About));
-        assert_eq!(menu_id_to_message("pause"), Some(TrayMessage::Pause));
-        assert_eq!(
-            menu_id_to_message("settings"),
-            Some(TrayMessage::OpenWebInterface)
-        );
-        assert_eq!(menu_id_to_message("exit"), Some(TrayMessage::Exit));
+        assert_eq!(menu_id_to_message("open_dashboard"), Some(TrayMessage::OpenDashboard));
+        assert_eq!(menu_id_to_message("view_logs"), Some(TrayMessage::ViewLogs));
+        assert_eq!(menu_id_to_message("edit_settings"), Some(TrayMessage::EditSettings));
+        assert_eq!(menu_id_to_message("quit_monitor"), Some(TrayMessage::QuitMonitor));
     }
 
     #[test]

@@ -1,16 +1,15 @@
-use log::{info, warn};
+use tracing::{info, warn};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use std::ptr;
 
-#[cfg(windows)]
-use winapi::shared::ntdef::NULL;
-#[cfg(windows)]
-use winapi::um::shellapi::ShellExecuteW;
-#[cfg(windows)]
-use winapi::um::winuser::{
-    MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_ICONWARNING, MB_OK,
-    MB_YESNO,
+use windows::{
+    Win32::UI::Shell::ShellExecuteW,
+    Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_ICONWARNING,
+        MB_OK, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, SW_SHOWNORMAL
+    },
+    Win32::Foundation::HWND,
+    core::PCWSTR,
 };
 
 pub struct GuiDialogs;
@@ -55,7 +54,7 @@ impl GuiDialogs {
         {
             let result =
                 Self::show_message_box_with_result(title, message, MB_ICONQUESTION | MB_YESNO);
-            result == IDYES as i32
+            result.0 == IDYES.0
         }
 
         #[cfg(not(windows))]
@@ -88,15 +87,15 @@ impl GuiDialogs {
 
             unsafe {
                 let result = ShellExecuteW(
-                    NULL as *mut _,
-                    operation.as_ptr(),
-                    file_path_wide.as_ptr(),
-                    ptr::null(),
-                    ptr::null(),
-                    1, // SW_SHOWNORMAL
+                    HWND::default(),
+                    PCWSTR(operation.as_ptr()),
+                    PCWSTR(file_path_wide.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    SW_SHOWNORMAL,
                 );
 
-                if result as isize <= 32 {
+                if result.0 as isize <= 32 {
                     return Err(format!("Failed to open file: {}", file_path).into());
                 }
             }
@@ -121,15 +120,15 @@ impl GuiDialogs {
 
             unsafe {
                 let result = ShellExecuteW(
-                    NULL as *mut _,
-                    operation.as_ptr(),
-                    folder_path_wide.as_ptr(),
-                    ptr::null(),
-                    ptr::null(),
-                    1, // SW_SHOWNORMAL
+                    HWND::default(),
+                    PCWSTR(operation.as_ptr()),
+                    PCWSTR(folder_path_wide.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    SW_SHOWNORMAL,
                 );
 
-                if result as isize <= 32 {
+                if result.0 as isize <= 32 {
                     return Err(format!("Failed to open folder: {}", folder_path).into());
                 }
             }
@@ -189,20 +188,20 @@ impl GuiDialogs {
     }
 
     #[cfg(windows)]
-    fn show_message_box(title: &str, message: &str, icon_type: u32) {
-        Self::show_message_box_with_result(title, message, icon_type);
+    fn show_message_box(title: &str, message: &str, icon_type: MESSAGEBOX_STYLE) {
+        let _ = Self::show_message_box_with_result(title, message, icon_type);
     }
 
     #[cfg(windows)]
-    fn show_message_box_with_result(title: &str, message: &str, icon_type: u32) -> i32 {
+    fn show_message_box_with_result(title: &str, message: &str, icon_type: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
         unsafe {
             let title_wide = Self::to_wide_string(title);
             let message_wide = Self::to_wide_string(message);
 
             MessageBoxW(
-                NULL as *mut _,
-                message_wide.as_ptr(),
-                title_wide.as_ptr(),
+                HWND::default(),
+                PCWSTR(message_wide.as_ptr()),
+                PCWSTR(title_wide.as_ptr()),
                 MB_OK | icon_type,
             )
         }

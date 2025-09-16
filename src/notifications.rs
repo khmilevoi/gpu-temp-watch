@@ -1,11 +1,13 @@
-use log::{info, warn};
+use tracing::{info, warn, error};
 use std::time::{SystemTime, UNIX_EPOCH};
-use winrt_notification::{Duration as ToastDuration, Toast};
-
-#[cfg(windows)]
-use winapi::shared::ntdef::NULL;
-#[cfg(windows)]
-use winapi::um::winuser::{MessageBoxW, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK};
+use windows::{
+    UI::Notifications::{ToastNotification, ToastNotificationManager},
+    Data::Xml::Dom,
+    Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED},
+    Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MESSAGEBOX_STYLE},
+    Win32::Foundation::HWND,
+    core::{HSTRING, PCWSTR},
+};
 
 pub struct NotificationManager {
     last_notification_time: Option<u64>,
@@ -24,24 +26,56 @@ impl NotificationManager {
         }
     }
 
-    #[cfg(windows)]
-    fn show_message_box(title: &str, message: &str, icon_type: u32) {
+    fn show_message_box(title: &str, message: &str, icon_type: MESSAGEBOX_STYLE) {
         unsafe {
             let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
             let message_wide: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
 
-            MessageBoxW(
-                NULL as *mut _,
-                message_wide.as_ptr(),
-                title_wide.as_ptr(),
+            let _ = MessageBoxW(
+                HWND::default(),
+                PCWSTR(message_wide.as_ptr()),
+                PCWSTR(title_wide.as_ptr()),
                 MB_OK | icon_type,
             );
         }
     }
 
-    #[cfg(not(windows))]
-    fn show_message_box(_title: &str, _message: &str, _icon_type: u32) {
-        // No-op for non-Windows platforms
+    #[tracing::instrument]
+    fn create_toast_notification(title: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        unsafe {
+            // Initialize COM for this thread
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+            // Create toast notification manager
+            let toast_manager = ToastNotificationManager::CreateToastNotifier()?;
+
+            // Create XML template for the toast
+            let xml_template = format!(
+                r#"<toast>
+                    <visual>
+                        <binding template="ToastGeneric">
+                            <text>{}</text>
+                            <text>{}</text>
+                        </binding>
+                    </visual>
+                    <audio silent="false" />
+                </toast>"#,
+                title, message
+            );
+
+            // Create XML document from template
+            let xml_doc = Dom::XmlDocument::new()?;
+            xml_doc.LoadXml(&HSTRING::from(xml_template))?;
+
+            // Create toast notification from XML
+            let toast = ToastNotification::CreateToastNotification(&xml_doc)?;
+
+            // Show the toast
+            toast_manager.Show(&toast)?;
+
+            info!("✅ WinRT toast notification sent successfully: {} - {}", title, message);
+            Ok(())
+        }
     }
 
     pub fn should_notify(&mut self, temp_exceeds_threshold: bool) -> bool {
@@ -75,7 +109,8 @@ impl NotificationManager {
         cooldown.min(self.max_cooldown_sec)
     }
 
-    pub fn send_temperature_alert(
+    #[tracing::instrument(skip(self))]
+    pub async fn send_temperature_alert(
         &mut self,
         sensor_name: &str,
         temperature: f32,
@@ -92,29 +127,29 @@ impl NotificationManager {
         println!("⚠️  {}", message);
         println!("🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥");
 
-        // Try to send Windows toast notification
-        match Toast::new("GPU Temperature Monitor")
-            .title(title)
-            .text1(&message)
-            .sound(None)
-            .duration(ToastDuration::Short)
-            .show()
-        {
-            Ok(_) => {
-                info!("✅ Toast notification sent successfully");
+        // Try to send Windows toast notification using tokio::task::spawn_blocking for COM/WinRT
+        let toast_title = title.to_string();
+        let toast_message = message.clone();
+
+        match tokio::task::spawn_blocking(move || {
+            Self::create_toast_notification(&toast_title, &toast_message)
+        }).await {
+            Ok(Ok(_)) => {
+                info!("✅ WinRT toast notification sent successfully");
                 println!("📱 Toast notification: {}", message);
             }
-            Err(e) => {
-                warn!("⚠️  Failed to send toast notification: {}", e);
+            Ok(Err(e)) => {
+                warn!("⚠️  Failed to send WinRT toast notification: {}", e);
                 println!("❌ Toast failed: {}", e);
                 warn!("🔄 Falling back to message box notification");
 
                 // Always fallback to message box for alerts
-                #[cfg(windows)]
-                {
-                    println!("💬 Showing message box instead");
-                    Self::show_message_box(title, &message, MB_ICONWARNING);
-                }
+                println!("💬 Showing message box instead");
+                Self::show_message_box(title, &message, MB_ICONWARNING);
+            }
+            Err(e) => {
+                error!("❌ Tokio spawn_blocking error: {}", e);
+                Self::show_message_box(title, &message, MB_ICONWARNING);
             }
         }
 
@@ -131,35 +166,49 @@ impl NotificationManager {
         Ok(())
     }
 
-    pub fn send_status_notification(
+    #[tracing::instrument(skip(self))]
+    pub async fn send_status_notification(
         &self,
         message: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("ℹ️  Status: {}", message);
 
         // Try to send Windows toast notification for status updates
-        match Toast::new("GPU Temperature Monitor")
-            .title("Status Update")
-            .text1(message)
-            .sound(None)
-            .duration(ToastDuration::Short)
-            .show()
-        {
-            Ok(_) => {
-                info!("✅ Status toast notification sent");
+        let toast_message = message.to_string();
+
+        match tokio::task::spawn_blocking(move || {
+            Self::create_toast_notification("GPU Temperature Monitor", &toast_message)
+        }).await {
+            Ok(Ok(_)) => {
+                info!("✅ Status WinRT toast notification sent");
             }
-            Err(e) => {
-                warn!("⚠️  Failed to send status toast notification: {}", e);
+            Ok(Err(e)) => {
+                warn!("⚠️  Failed to send status WinRT toast notification: {}", e);
 
                 // For startup notifications, show message box as well
                 if message.contains("started") {
-                    #[cfg(windows)]
+                    Self::show_message_box("GPU Temperature Monitor", message, MB_ICONINFORMATION);
+                }
+            }
+            Err(e) => {
+                error!("❌ Tokio spawn_blocking error for status notification: {}", e);
+                if message.contains("started") {
                     Self::show_message_box("GPU Temperature Monitor", message, MB_ICONINFORMATION);
                 }
             }
         }
 
         Ok(())
+    }
+
+    // Temporary sync wrapper for backward compatibility
+    pub fn send_status_notification_sync(&self, message: &str) {
+        println!("ℹ️  Status: {}", message);
+
+        // For now, just log to console and use fallback message box for critical notifications
+        if message.contains("started") || message.contains("Error") {
+            Self::show_message_box("GPU Temperature Monitor", message, MB_ICONINFORMATION);
+        }
     }
 }
 

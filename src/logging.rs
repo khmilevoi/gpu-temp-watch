@@ -1,5 +1,5 @@
 use chrono::Local;
-use log::{error, info};
+use tracing::{error, info};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;

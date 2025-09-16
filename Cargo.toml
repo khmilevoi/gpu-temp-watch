@@ -8,17 +8,26 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 nvml-wrapper = "0.11"
-tray-icon = "0.17"
 image = "0.25"
-winrt-notification = "0.5"
-log = "0.4"
-env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
-winapi = { version = "0.3", features = ["winuser", "shellapi", "processthreadsapi", "wincon", "consoleapi", "winnls"] }
-windows = { version = "0.58", features = ["Win32_UI_Shell", "Win32_System_Registry", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
-warp = "0.3"
-tokio-tungstenite = "0.24"
+tray-icon = "0.17"
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
 futures-util = "0.3"
+windows = { version = "0.58", features = [
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_Graphics_Gdi",
+    "ApplicationModel_Background",
+    "UI_Notifications",
+    "Data_Xml_Dom"
+] }
 
 [profile.release]
 opt-level = "s"
