@@ -1,11 +1,7 @@
-use std::path::PathBuf;
-use std::env;
 use log::info;
-use windows::{
-    core::*,
-    Win32::System::Registry::*,
-    Win32::Foundation::*,
-};
+use std::env;
+use std::path::PathBuf;
+use windows::{core::*, Win32::Foundation::*, Win32::System::Registry::*};
 
 pub struct AutoStart {
     app_name: String,
@@ -17,10 +13,7 @@ impl AutoStart {
         let app_name = "GpuTempWatch".to_string();
         let app_path = env::current_exe().map_err(|_e| windows::core::Error::from_win32())?;
 
-        Ok(AutoStart {
-            app_name,
-            app_path,
-        })
+        Ok(AutoStart { app_name, app_path })
     }
 
     pub fn install(&self) -> windows::core::Result<()> {
@@ -50,14 +43,22 @@ impl AutoStart {
                 0,
                 KEY_WRITE,
                 &mut key,
-            ).ok()?;
+            )
+            .ok()?;
 
             // Convert app name to wide string
-            let app_name_wide: Vec<u16> = self.app_name.encode_utf16().chain(std::iter::once(0)).collect();
+            let app_name_wide: Vec<u16> = self
+                .app_name
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
             // Convert app path to wide string
             let app_path_str = format!("\"{}\"", self.app_path.display());
-            let app_path_wide: Vec<u16> = app_path_str.encode_utf16().chain(std::iter::once(0)).collect();
+            let app_path_wide: Vec<u16> = app_path_str
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
             // Set the registry value
             let data_bytes: &[u8] = std::slice::from_raw_parts(
@@ -89,16 +90,18 @@ impl AutoStart {
                 0,
                 KEY_WRITE,
                 &mut key,
-            ).ok()?;
+            )
+            .ok()?;
 
             // Convert app name to wide string
-            let app_name_wide: Vec<u16> = self.app_name.encode_utf16().chain(std::iter::once(0)).collect();
+            let app_name_wide: Vec<u16> = self
+                .app_name
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
             // Delete the registry value
-            let result = RegDeleteValueW(
-                key,
-                PCWSTR(app_name_wide.as_ptr()),
-            );
+            let result = RegDeleteValueW(key, PCWSTR(app_name_wide.as_ptr()));
 
             let _ = RegCloseKey(key);
 
@@ -129,7 +132,11 @@ impl AutoStart {
             }
 
             // Convert app name to wide string
-            let app_name_wide: Vec<u16> = self.app_name.encode_utf16().chain(std::iter::once(0)).collect();
+            let app_name_wide: Vec<u16> = self
+                .app_name
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
             let mut data_type = REG_NONE;
             let mut data_size = 0u32;
@@ -153,7 +160,9 @@ impl AutoStart {
     pub fn print_status(&self) {
         if self.is_installed() {
             println!("✅ Autostart is enabled");
-            println!("   Registry: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+            println!(
+                "   Registry: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+            );
             println!("   Key: {}", self.app_name);
             println!("   Path: {}", self.app_path.display());
         } else {

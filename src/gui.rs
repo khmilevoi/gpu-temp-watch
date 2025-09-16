@@ -1,17 +1,17 @@
+use log::{info, warn};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
-use log::{info, warn};
 
 #[cfg(windows)]
-use winapi::um::winuser::{
-    MessageBoxW, MB_OK, MB_ICONINFORMATION, MB_ICONWARNING, MB_ICONERROR, MB_YESNO, MB_ICONQUESTION,
-    IDYES
-};
+use winapi::shared::ntdef::NULL;
 #[cfg(windows)]
 use winapi::um::shellapi::ShellExecuteW;
 #[cfg(windows)]
-use winapi::shared::ntdef::NULL;
+use winapi::um::winuser::{
+    MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_ICONWARNING, MB_OK,
+    MB_YESNO,
+};
 
 pub struct GuiDialogs;
 
@@ -53,7 +53,8 @@ impl GuiDialogs {
     pub fn show_question(title: &str, message: &str) -> bool {
         #[cfg(windows)]
         {
-            let result = Self::show_message_box_with_result(title, message, MB_ICONQUESTION | MB_YESNO);
+            let result =
+                Self::show_message_box_with_result(title, message, MB_ICONQUESTION | MB_YESNO);
             result == IDYES as i32
         }
 
@@ -68,7 +69,13 @@ impl GuiDialogs {
     pub fn show_input_dialog(_title: &str, prompt: &str, default_value: &str) -> Option<String> {
         // For now, we'll use a simple approach with multiple input boxes
         // In a full implementation, you might want to create a custom dialog
-        Self::show_info("Input Required", &format!("{}\n\nDefault: {}\n\nPlease use the settings file to change this value for now.", prompt, default_value));
+        Self::show_info(
+            "Input Required",
+            &format!(
+                "{}\n\nDefault: {}\n\nPlease use the settings file to change this value for now.",
+                prompt, default_value
+            ),
+        );
         None // Placeholder - returning None means user cancelled
     }
 
@@ -203,7 +210,10 @@ impl GuiDialogs {
 
     #[cfg(windows)]
     fn to_wide_string(s: &str) -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 }
 
@@ -236,7 +246,11 @@ impl GuiManager {
     }
 
     pub fn get_status_tooltip(&self) -> String {
-        let status = if self.monitoring_paused { "PAUSED" } else { "ACTIVE" };
+        let status = if self.monitoring_paused {
+            "PAUSED"
+        } else {
+            "ACTIVE"
+        };
         let autostart = if self.autostart_enabled { "ON" } else { "OFF" };
 
         format!(
@@ -252,14 +266,14 @@ impl GuiManager {
         if success {
             GuiDialogs::show_info(
                 "Operation Successful",
-                &format!("✅ {} completed successfully", operation)
+                &format!("✅ {} completed successfully", operation),
             );
             info!("GUI operation successful: {}", operation);
         } else {
             let error = error_msg.unwrap_or("Unknown error");
             GuiDialogs::show_error(
                 "Operation Failed",
-                &format!("❌ {} failed:\n\n{}", operation, error)
+                &format!("❌ {} failed:\n\n{}", operation, error),
             );
             warn!("GUI operation failed: {}: {}", operation, error);
         }

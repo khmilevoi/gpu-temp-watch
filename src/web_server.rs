@@ -1,9 +1,9 @@
-use warp::Filter;
+use crate::autostart::AutoStart;
+use crate::config::Config;
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use log::info;
-use crate::config::Config;
-use crate::autostart::AutoStart;
+use warp::Filter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebConfig {
@@ -68,9 +68,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
-        let autostart_enabled = AutoStart::new()
-            .map(|a| a.is_installed())
-            .unwrap_or(false);
+        let autostart_enabled = AutoStart::new().map(|a| a.is_installed()).unwrap_or(false);
 
         Self {
             config,
@@ -135,14 +133,10 @@ impl WebServer {
             .allow_methods(vec!["GET", "POST", "PUT"]);
 
         // Static files route
-        let static_files = warp::path("static")
-            .and(warp::fs::dir("web"));
+        let static_files = warp::path("static").and(warp::fs::dir("web"));
 
         // Main page
-        let index = warp::path::end()
-            .map(|| {
-                warp::reply::html(include_str!("../web/index.html"))
-            });
+        let index = warp::path::end().map(|| warp::reply::html(include_str!("../web/index.html")));
 
         // API routes
         let api = warp::path("api");
@@ -196,15 +190,15 @@ impl WebServer {
 
         info!("🌐 Starting web server on http://localhost:{}", self.port);
 
-        warp::serve(routes)
-            .run(([127, 0, 0, 1], self.port))
-            .await;
+        warp::serve(routes).run(([127, 0, 0, 1], self.port)).await;
 
         Ok(())
     }
 }
 
-fn with_state(state: SharedState) -> impl Filter<Extract = (SharedState,), Error = std::convert::Infallible> + Clone {
+fn with_state(
+    state: SharedState,
+) -> impl Filter<Extract = (SharedState,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || state.clone())
 }
 
@@ -226,7 +220,10 @@ async fn get_config(state: SharedState) -> Result<impl warp::Reply, warp::Reject
     Ok(warp::reply::json(&web_config))
 }
 
-async fn update_config(new_config: WebConfig, state: SharedState) -> Result<impl warp::Reply, warp::Rejection> {
+async fn update_config(
+    new_config: WebConfig,
+    state: SharedState,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let mut state = state.write().unwrap();
 
     // Convert and validate
@@ -268,7 +265,10 @@ async fn get_logs(state: SharedState) -> Result<impl warp::Reply, warp::Rejectio
     Ok(warp::reply::json(&state.recent_logs))
 }
 
-async fn handle_action(request: ActionRequest, state: SharedState) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_action(
+    request: ActionRequest,
+    state: SharedState,
+) -> Result<impl warp::Reply, warp::Rejection> {
     match request.action.as_str() {
         "pause" => {
             let mut state = state.write().unwrap();
@@ -310,8 +310,15 @@ async fn handle_action(request: ActionRequest, state: SharedState) -> Result<imp
                         Ok(_) => {
                             let mut state = state.write().unwrap();
                             state.autostart_enabled = !currently_enabled;
-                            let status = if !currently_enabled { "enabled" } else { "disabled" };
-                            state.add_log("INFO", &format!("Autostart {} via web interface", status));
+                            let status = if !currently_enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            };
+                            state.add_log(
+                                "INFO",
+                                &format!("Autostart {} via web interface", status),
+                            );
 
                             response.success = true;
                             response.message = format!("Autostart {}", status);
@@ -342,18 +349,63 @@ pub fn open_browser(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        Command::new("cmd")
-            .args(&["/c", "start", url])
-            .spawn()?;
+        Command::new("cmd").args(&["/c", "start", url]).spawn()?;
     }
 
     #[cfg(not(windows))]
     {
         use std::process::Command;
-        Command::new("xdg-open")
-            .arg(url)
-            .spawn()?;
+        Command::new("xdg-open").arg(url).spawn()?;
     }
 
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_config_round_trip_preserves_values() {
+        let config = Config {
+            temperature_threshold_c: 72.5,
+            poll_interval_sec: 15,
+            base_cooldown_sec: 30,
+            enable_logging: false,
+            log_file_path: Some("custom.log".to_string()),
+        };
+
+        let web: WebConfig = config.clone().into();
+        assert_eq!(web.temperature_threshold_c, 72.5);
+        assert_eq!(web.poll_interval_sec, 15);
+        assert_eq!(web.base_cooldown_sec, 30);
+        assert!(!web.enable_logging);
+        assert_eq!(web.log_file_path.as_deref(), Some("custom.log"));
+
+        let round_trip: Config = web.into();
+        assert_eq!(round_trip.temperature_threshold_c, 72.5);
+        assert_eq!(round_trip.poll_interval_sec, 15);
+        assert_eq!(round_trip.base_cooldown_sec, 30);
+        assert!(!round_trip.enable_logging);
+        assert_eq!(round_trip.log_file_path.as_deref(), Some("custom.log"));
+    }
+
+    #[test]
+    fn add_log_keeps_recent_entries_bounded() {
+        let mut state = AppState {
+            config: Config::default(),
+            current_temperature: 0.0,
+            monitoring_paused: false,
+            autostart_enabled: false,
+            uptime_seconds: 0,
+            recent_logs: Vec::new(),
+        };
+
+        for i in 0..105 {
+            state.add_log("INFO", &format!("message {}", i));
+        }
+
+        assert_eq!(state.recent_logs.len(), 100);
+        assert_eq!(state.recent_logs.first().unwrap().message, "message 5");
+        assert_eq!(state.recent_logs.last().unwrap().message, "message 104");
+    }
 }

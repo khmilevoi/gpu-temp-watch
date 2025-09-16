@@ -1,11 +1,11 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use winrt_notification::{Toast, Duration as ToastDuration};
 use log::{info, warn};
+use std::time::{SystemTime, UNIX_EPOCH};
+use winrt_notification::{Duration as ToastDuration, Toast};
 
 #[cfg(windows)]
-use winapi::um::winuser::{MessageBoxW, MB_OK, MB_ICONWARNING, MB_ICONINFORMATION};
-#[cfg(windows)]
 use winapi::shared::ntdef::NULL;
+#[cfg(windows)]
+use winapi::um::winuser::{MessageBoxW, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK};
 
 pub struct NotificationManager {
     last_notification_time: Option<u64>,
@@ -75,7 +75,12 @@ impl NotificationManager {
         cooldown.min(self.max_cooldown_sec)
     }
 
-    pub fn send_temperature_alert(&mut self, sensor_name: &str, temperature: f32, threshold: f32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn send_temperature_alert(
+        &mut self,
+        sensor_name: &str,
+        temperature: f32,
+        threshold: f32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let title = "GPU Temperature Alert!";
         let message = format!(
             "{}: {:.1}°C (Threshold: {:.1}°C)",
@@ -116,14 +121,20 @@ impl NotificationManager {
         // For debugging: log to console instead of showing modal dialogs that block tray
         #[cfg(debug_assertions)]
         {
-            println!("🔔 DEBUG: Would show GUI dialog - Temperature Alert: {}", message);
+            println!(
+                "🔔 DEBUG: Would show GUI dialog - Temperature Alert: {}",
+                message
+            );
         }
 
         self.cooldown_level += 1;
         Ok(())
     }
 
-    pub fn send_status_notification(&self, message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn send_status_notification(
+        &self,
+        message: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         println!("ℹ️  Status: {}", message);
 
         // Try to send Windows toast notification for status updates
@@ -155,5 +166,58 @@ impl NotificationManager {
 impl Default for NotificationManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl NotificationManager {
+    fn test_set_last_notification_time(&mut self, value: Option<u64>) {
+        self.last_notification_time = value;
+    }
+
+    fn test_last_notification_time(&self) -> Option<u64> {
+        self.last_notification_time
+    }
+
+    fn test_set_cooldown_level(&mut self, level: u32) {
+        self.cooldown_level = level;
+    }
+
+    fn test_cooldown_level(&self) -> u32 {
+        self.cooldown_level
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn cooldown_prevents_immediate_repeat() {
+        let mut manager = NotificationManager::new();
+        assert!(manager.should_notify(true));
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        manager.test_set_last_notification_time(Some(now));
+        manager.test_set_cooldown_level(0);
+
+        assert!(!manager.should_notify(true));
+
+        manager.test_set_last_notification_time(Some(0));
+        assert!(manager.should_notify(true));
+    }
+
+    #[test]
+    fn reset_on_normal_temperature() {
+        let mut manager = NotificationManager::new();
+        manager.test_set_last_notification_time(Some(123));
+        manager.test_set_cooldown_level(3);
+
+        assert!(!manager.should_notify(false));
+        assert_eq!(manager.test_cooldown_level(), 0);
+        assert_eq!(manager.test_last_notification_time(), None);
     }
 }

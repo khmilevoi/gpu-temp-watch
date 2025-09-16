@@ -1,8 +1,8 @@
+use chrono::Local;
+use log::{error, info};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use chrono::Local;
-use log::{error, info};
 
 pub struct FileLogger {
     log_file_path: Option<String>,
@@ -38,11 +38,19 @@ impl FileLogger {
 
     fn log_startup(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.write_log_entry(&format!("🚀 GPU Temperature Monitor v0.1.0 started"))?;
-        self.write_log_entry(&format!("📋 Logging enabled, file: {:?}", self.log_file_path))?;
+        self.write_log_entry(&format!(
+            "📋 Logging enabled, file: {:?}",
+            self.log_file_path
+        ))?;
         Ok(())
     }
 
-    pub fn log_temperature_reading(&self, sensor_name: &str, temperature: f32, threshold: f32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn log_temperature_reading(
+        &self,
+        sensor_name: &str,
+        temperature: f32,
+        threshold: f32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if !self.enabled {
             return Ok(());
         }
@@ -63,14 +71,23 @@ impl FileLogger {
         self.write_log_entry(&message)
     }
 
-    pub fn log_alert(&self, sensor_name: &str, temperature: f32, threshold: f32, cooldown_level: u32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn log_alert(
+        &self,
+        sensor_name: &str,
+        temperature: f32,
+        threshold: f32,
+        cooldown_level: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if !self.enabled {
             return Ok(());
         }
 
         let message = format!(
             "🚨 ALERT #{}: {} reached {:.1}°C (Threshold: {:.1}°C)",
-            cooldown_level + 1, sensor_name, temperature, threshold
+            cooldown_level + 1,
+            sensor_name,
+            temperature,
+            threshold
         );
 
         self.write_log_entry(&message)
@@ -97,11 +114,7 @@ impl FileLogger {
             let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let log_line = format!("[{}] {}\n", timestamp, message);
 
-            match OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-            {
+            match OpenOptions::new().create(true).append(true).open(log_path) {
                 Ok(mut file) => {
                     if let Err(e) = file.write_all(log_line.as_bytes()) {
                         error!("Failed to write to log file: {}", e);
@@ -127,7 +140,10 @@ impl FileLogger {
             if let Some(_parent) = Path::new(log_path).parent() {
                 // This is a simplified cleanup - in a real implementation,
                 // you'd parse log file dates and remove old ones
-                println!("🧹 Log cleanup functionality (max age: {} days) - placeholder", max_age_days);
+                println!(
+                    "🧹 Log cleanup functionality (max age: {} days) - placeholder",
+                    max_age_days
+                );
             }
         }
 

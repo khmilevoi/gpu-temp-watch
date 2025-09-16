@@ -1,27 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
+mod config;
+mod gui;
+mod logging;
 mod monitor;
 mod notifications;
-mod config;
 mod tray;
-mod logging;
-mod autostart;
-mod gui;
 mod web_server;
 
-use monitor::{TempMonitor, GpuTempReading};
-use notifications::NotificationManager;
-use config::Config;
-use tray::{SystemTray, TrayMessage};
-use logging::FileLogger;
 use autostart::AutoStart;
+use config::Config;
 use gui::{GuiDialogs, GuiManager};
-use web_server::{WebServer, open_browser};
+use logging::FileLogger;
+use monitor::{GpuTempReading, TempMonitor};
+use notifications::NotificationManager;
+use tray::{SystemTray, TrayMessage};
+use web_server::{open_browser, WebServer};
 
-use std::time::Duration;
+use log::{info, warn};
 use std::env;
+use std::time::Duration;
 use tokio::time::sleep;
-use log::warn;
 
 fn debug_print(msg: &str) {
     #[cfg(debug_assertions)]
@@ -44,12 +44,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 debug_print("🚀 GPU Temperature Monitor v0.1.0");
                 debug_print("📥 Installing autostart...");
                 match AutoStart::new() {
-                    Ok(autostart) => {
-                        match autostart.install() {
-                            Ok(_) => autostart.print_status(),
-                            Err(e) => debug_print(&format!("❌ Failed to install autostart: {:?}", e)),
-                        }
-                    }
+                    Ok(autostart) => match autostart.install() {
+                        Ok(_) => autostart.print_status(),
+                        Err(e) => debug_print(&format!("❌ Failed to install autostart: {:?}", e)),
+                    },
                     Err(e) => debug_print(&format!("❌ Failed to create autostart: {:?}", e)),
                 }
                 return Ok(());
@@ -58,12 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("🚀 GPU Temperature Monitor v0.1.0");
                 println!("📤 Removing autostart...");
                 match AutoStart::new() {
-                    Ok(autostart) => {
-                        match autostart.uninstall() {
-                            Ok(_) => autostart.print_status(),
-                            Err(e) => eprintln!("❌ Failed to remove autostart: {:?}", e),
-                        }
-                    }
+                    Ok(autostart) => match autostart.uninstall() {
+                        Ok(_) => autostart.print_status(),
+                        Err(e) => eprintln!("❌ Failed to remove autostart: {:?}", e),
+                    },
                     Err(e) => eprintln!("❌ Failed to create autostart: {:?}", e),
                 }
                 return Ok(());
@@ -121,7 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("❌ Failed to create system tray: {}", e);
-            let _ = notification_manager.send_status_notification(&format!("❌ System Tray Error: {}. Continuing without tray integration.", e));
+            let _ = notification_manager.send_status_notification(&format!(
+                "❌ System Tray Error: {}. Continuing without tray integration.",
+                e
+            ));
             None
         }
     };
@@ -135,7 +134,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("{}", error_msg);
 
             // Send error notification and exit
-            let _ = notification_manager.send_status_notification(&format!("❌ NVML Connection Error: {}", e));
+            let _ = notification_manager
+                .send_status_notification(&format!("❌ NVML Connection Error: {}", e));
             return Err(e);
         }
     }
@@ -146,10 +146,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Send startup toast notification
     #[cfg(debug_assertions)]
     {
-        let _ = notification_manager.send_status_notification("🚀 GPU Temperature Monitor started successfully! Right-click tray icon for options.");
+        let _ = notification_manager.send_status_notification(
+            "🚀 GPU Temperature Monitor started successfully! Right-click tray icon for options.",
+        );
     }
 
-    println!("🌡️  Temperature threshold: {:.1}°C", config.temperature_threshold_c);
+    println!(
+        "🌡️  Temperature threshold: {:.1}°C",
+        config.temperature_threshold_c
+    );
     println!("⏱️  Poll interval: {}s", config.poll_interval_sec);
     println!("🔄 Starting monitoring loop...");
 
@@ -188,14 +193,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         monitoring_paused = true;
                         gui_manager.set_monitoring_paused(true);
                         // Send toast notification instead of modal dialog
-                        let _ = notification_manager.send_status_notification("⏸️ GPU monitoring paused");
+                        let _ = notification_manager
+                            .send_status_notification("⏸️ GPU monitoring paused");
                     }
                     TrayMessage::Resume => {
                         println!("▶️ Monitoring resumed");
                         monitoring_paused = false;
                         gui_manager.set_monitoring_paused(false);
                         // Send toast notification instead of modal dialog
-                        let _ = notification_manager.send_status_notification("▶️ GPU monitoring resumed");
+                        let _ = notification_manager
+                            .send_status_notification("▶️ GPU monitoring resumed");
                     }
                     TrayMessage::Settings => {
                         println!("⚙️ Settings clicked");
@@ -204,20 +211,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     TrayMessage::OpenWebInterface => {
                         println!("🌐 Opening web interface...");
+                        info!("Tray request: open web interface");
                         if let Err(e) = open_browser("http://localhost:18235") {
-                            let _ = notification_manager.send_status_notification(&format!("❌ Failed to open web interface: {}", e));
+                            warn!("Failed to open web interface: {}", e);
+                            let _ = notification_manager.send_status_notification(&format!(
+                                "❌ Failed to open web interface: {}",
+                                e
+                            ));
                         } else {
-                            let _ = notification_manager.send_status_notification("🌐 Web interface opened in browser");
+                            info!("Web interface launched in default browser");
+                            let _ = notification_manager
+                                .send_status_notification("🌐 Web interface opened in browser");
                         }
                     }
                     TrayMessage::ShowLogs => {
                         println!("📋 Show logs clicked");
                         if let Some(log_path) = &config.log_file_path {
                             if let Err(e) = GuiDialogs::open_file(log_path) {
-                                let _ = notification_manager.send_status_notification(&format!("❌ Failed to open log file: {}", e));
+                                let _ = notification_manager.send_status_notification(&format!(
+                                    "❌ Failed to open log file: {}",
+                                    e
+                                ));
                             }
                         } else {
-                            let _ = notification_manager.send_status_notification("⚠️ Log file path not configured");
+                            let _ = notification_manager
+                                .send_status_notification("⚠️ Log file path not configured");
                         }
                     }
                     TrayMessage::About => {
@@ -228,48 +246,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     TrayMessage::OpenConfig => {
                         println!("📂 Open config clicked");
                         if let Err(e) = GuiDialogs::open_file("./config.json") {
-                            let _ = notification_manager.send_status_notification(&format!("❌ Failed to open config file: {}", e));
+                            let _ = notification_manager.send_status_notification(&format!(
+                                "❌ Failed to open config file: {}",
+                                e
+                            ));
                         }
                     }
                     TrayMessage::OpenLogsFolder => {
                         println!("📁 Open logs folder clicked");
                         if let Err(e) = GuiDialogs::open_folder("./Logs") {
-                            let _ = notification_manager.send_status_notification(&format!("❌ Failed to open logs folder: {}", e));
+                            let _ = notification_manager.send_status_notification(&format!(
+                                "❌ Failed to open logs folder: {}",
+                                e
+                            ));
                         }
                     }
                     TrayMessage::InstallAutostart => {
                         println!("⚙️ Installing autostart...");
                         match AutoStart::new() {
-                            Ok(autostart) => {
-                                match autostart.install() {
-                                    Ok(_) => {
-                                        let _ = notification_manager.send_status_notification("✅ Autostart installed! Application will start automatically with Windows.");
-                                    }
-                                    Err(e) => {
-                                        let _ = notification_manager.send_status_notification(&format!("❌ Failed to install autostart: {:?}", e));
-                                    }
+                            Ok(autostart) => match autostart.install() {
+                                Ok(_) => {
+                                    let _ = notification_manager.send_status_notification("✅ Autostart installed! Application will start automatically with Windows.");
                                 }
-                            }
+                                Err(e) => {
+                                    let _ = notification_manager.send_status_notification(
+                                        &format!("❌ Failed to install autostart: {:?}", e),
+                                    );
+                                }
+                            },
                             Err(e) => {
-                                let _ = notification_manager.send_status_notification(&format!("❌ Failed to create autostart: {:?}", e));
+                                let _ = notification_manager.send_status_notification(&format!(
+                                    "❌ Failed to create autostart: {:?}",
+                                    e
+                                ));
                             }
                         }
                     }
                     TrayMessage::UninstallAutostart => {
                         println!("🗑️ Removing autostart...");
                         match AutoStart::new() {
-                            Ok(autostart) => {
-                                match autostart.uninstall() {
-                                    Ok(_) => {
-                                        let _ = notification_manager.send_status_notification("✅ Autostart removed! Application will no longer start with Windows.");
-                                    }
-                                    Err(e) => {
-                                        let _ = notification_manager.send_status_notification(&format!("❌ Failed to remove autostart: {:?}", e));
-                                    }
+                            Ok(autostart) => match autostart.uninstall() {
+                                Ok(_) => {
+                                    let _ = notification_manager.send_status_notification("✅ Autostart removed! Application will no longer start with Windows.");
                                 }
-                            }
+                                Err(e) => {
+                                    let _ = notification_manager.send_status_notification(
+                                        &format!("❌ Failed to remove autostart: {:?}", e),
+                                    );
+                                }
+                            },
                             Err(e) => {
-                                let _ = notification_manager.send_status_notification(&format!("❌ Failed to create autostart: {:?}", e));
+                                let _ = notification_manager.send_status_notification(&format!(
+                                    "❌ Failed to create autostart: {:?}",
+                                    e
+                                ));
                             }
                         }
                     }
@@ -279,15 +309,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Monitor temperatures if not paused
         if !monitoring_paused {
-            match monitor_temperatures(&temp_monitor, &mut notification_manager, &config, &mut system_tray, &file_logger, &mut gui_manager, &web_state).await {
-                Ok(_) => {},
+            match monitor_temperatures(
+                &temp_monitor,
+                &mut notification_manager,
+                &config,
+                &mut system_tray,
+                &file_logger,
+                &mut gui_manager,
+                &web_state,
+            )
+            .await
+            {
+                Ok(_) => {}
                 Err(e) => {
                     eprintln!("❌ Monitoring error: {}", e);
                     let _ = file_logger.log_error(&format!("Monitoring error: {}", e));
 
                     // Show GUI error dialog for critical errors
                     #[cfg(debug_assertions)]
-                    GuiDialogs::show_warning("Monitoring Warning", &format!("⚠️ Monitoring error occurred:\n\n{}\n\nMonitoring will continue...", e));
+                    GuiDialogs::show_warning(
+                        "Monitoring Warning",
+                        &format!(
+                            "⚠️ Monitoring error occurred:\n\n{}\n\nMonitoring will continue...",
+                            e
+                        ),
+                    );
 
                     // Continue monitoring despite errors
                 }
@@ -314,7 +360,6 @@ async fn monitor_temperatures(
     gui_manager: &mut GuiManager,
     web_state: &web_server::SharedState,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     let gpu_temps = temp_monitor.get_gpu_temperatures().await?;
 
     if gpu_temps.is_empty() {
@@ -343,7 +388,11 @@ async fn monitor_temperatures(
         println!("{} {}: {:.1}°C", status_icon, reading.sensor_name, temp);
 
         // Log to file
-        let _ = file_logger.log_temperature_reading(&reading.sensor_name, temp, config.temperature_threshold_c);
+        let _ = file_logger.log_temperature_reading(
+            &reading.sensor_name,
+            temp,
+            config.temperature_threshold_c,
+        );
     }
 
     // Update GUI manager with current temperature
@@ -357,7 +406,11 @@ async fn monitor_temperatures(
 
         // Add temperature reading to web logs
         for reading in &gpu_temps {
-            let level = if reading.temperature > config.temperature_threshold_c { "WARN" } else { "INFO" };
+            let level = if reading.temperature > config.temperature_threshold_c {
+                "WARN"
+            } else {
+                "INFO"
+            };
             let message = format!("{}: {:.1}°C", reading.sensor_name, reading.temperature);
             state.add_log(level, &message);
         }
@@ -375,7 +428,12 @@ async fn monitor_temperatures(
         let cooldown_level = notification_manager.cooldown_level;
 
         // Log alert to file
-        let _ = file_logger.log_alert(&hottest_sensor, max_temp, config.temperature_threshold_c, cooldown_level);
+        let _ = file_logger.log_alert(
+            &hottest_sensor,
+            max_temp,
+            config.temperature_threshold_c,
+            cooldown_level,
+        );
 
         notification_manager.send_temperature_alert(
             &hottest_sensor,

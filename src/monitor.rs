@@ -1,6 +1,6 @@
+use log::{debug, error, info, warn};
 use nvml_wrapper::Nvml;
 use std::error::Error;
-use log::{debug, error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct GpuTempReading {
@@ -43,9 +43,13 @@ impl TempMonitor {
         for device_index in 0..device_count {
             match nvml.device_by_index(device_index) {
                 Ok(device) => {
-                    let name = device.name().unwrap_or_else(|_| format!("GPU {}", device_index));
+                    let name = device
+                        .name()
+                        .unwrap_or_else(|_| format!("GPU {}", device_index));
 
-                    match device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu) {
+                    match device
+                        .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
+                    {
                         Ok(temp) => {
                             debug!("📊 {}: {}°C", name, temp);
 
@@ -79,10 +83,13 @@ impl TempMonitor {
         match &self.nvml {
             Some(nvml) => {
                 let device_count = nvml.device_count()?;
-                info!("✅ NVML connection successful - {} GPU devices found", device_count);
+                info!(
+                    "✅ NVML connection successful - {} GPU devices found",
+                    device_count
+                );
                 Ok(())
             }
-            None => Err("NVML not initialized".into())
+            None => Err("NVML not initialized".into()),
         }
     }
 }

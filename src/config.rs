@@ -58,14 +58,23 @@ impl Config {
         PathBuf::from("./config.json")
     }
 
-    pub fn update_threshold(&mut self, new_threshold: f32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_threshold(
+        &mut self,
+        new_threshold: f32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.temperature_threshold_c = new_threshold;
         self.save()?;
-        println!("🌡️  Temperature threshold updated to: {:.1}°C", new_threshold);
+        println!(
+            "🌡️  Temperature threshold updated to: {:.1}°C",
+            new_threshold
+        );
         Ok(())
     }
 
-    pub fn update_poll_interval(&mut self, new_interval: u64) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_poll_interval(
+        &mut self,
+        new_interval: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.poll_interval_sec = new_interval;
         self.save()?;
         println!("⏱️  Poll interval updated to: {}s", new_interval);
