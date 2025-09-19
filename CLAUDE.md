@@ -14,7 +14,7 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 - **System Tray**: Native Windows system tray icon with dynamic color-coded temperature icons and context menu
 - **Web Interface**: Modern web-based configuration and monitoring interface on localhost:18235
 - **Toast Notifications**: Windows native toast notifications with smart exponential backoff cooldown
-- **File Logging**: Comprehensive structured logging to `./Logs/GpuTempWatch.log` with timestamped entries
+- **Unified Logging**: New LoggerService providing both console and file logging with JSON structured format, correlation IDs, and automatic rotation to `./Logs/gpu-temp-watch.log`
 - **Autostart Management**: Automatic Windows startup integration via registry
 - **Configuration**: JSON-based configuration with real-time web updates
 
@@ -23,7 +23,7 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 - `monitor.rs`: NVML wrapper for GPU temperature monitoring with error handling
 - `tray.rs`: System tray integration with dynamic icon updates (cool/warm/hot states) and double-click support
 - `notifications.rs`: Windows toast notification system with exponential backoff (20s → 40s → 80s → 160s → 320s)
-- `logging.rs`: Comprehensive file logging with automatic directory creation and rotation
+- `logger_service.rs`: Unified logging service with console and file output, JSON structured logging, and automatic rotation
 - `config.rs`: JSON configuration management with validation and live updates
 - `web_server.rs`: HTTP server with REST API and WebSocket support for real-time monitoring
 - `autostart.rs`: Windows registry integration for startup management
@@ -35,7 +35,7 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 - `poll_interval_sec`: Polling interval in seconds (default: 20)
 - `base_cooldown_sec`: Base cooldown between notifications (default: 20)
 - `enable_logging`: Enable/disable file logging (default: true)
-- `log_file_path`: Path to log file (default: "./Logs/GpuTempWatch.log")
+- `log_file_path`: Path to log file (default: "./Logs/gpu-temp-watch.log")
 
 ## Development Commands
 
@@ -81,16 +81,41 @@ cargo run
 - Windows 10/11 (for toast notifications)
 - No additional software required (self-contained executable)
 
-### Log Monitoring
+### Logging System
+
+The application uses a unified LoggerService that provides:
+
+#### Features
+- **Dual Output**: Both console (human-readable) and file (JSON structured) logging
+- **JSON Format**: Structured file logs with correlation IDs, timestamps, and contextual data
+- **Log Rotation**: Automatic rotation based on file size (10MB) and count (5 files)
+- **Thread-Safe**: Concurrent access using Arc<Mutex<>>
+- **Multiple Levels**: Trace, Debug, Info, Warn, Error with configurable minimum levels
+- **Specialized Functions**: Built-in support for startup, temperature alerts, and shutdown events
+
+#### Log Monitoring
 ```bash
 # Monitor log in real-time (Windows)
-Get-Content ".\Logs\GpuTempWatch.log" -Wait -Tail 10
+Get-Content ".\Logs\gpu-temp-watch.log" -Wait -Tail 10
 
 # View recent log entries
-Get-Content ".\Logs\GpuTempWatch.log" -Tail 20
+Get-Content ".\Logs\gpu-temp-watch.log" -Tail 20
 
 # Open logs directory
 explorer Logs\
+```
+
+#### Usage Examples
+```rust
+// Basic logging
+log_info!("Application started");
+log_error!("Failed to connect", json!({"error": "Connection timeout"}));
+
+// Temperature logging
+log_temperature!("GPU-0", 75.5, 80.0);
+
+// Startup logging
+log_startup!("1.0.0", &["--help"]);
 ```
 
 ### Notification System

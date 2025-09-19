@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use crate::{log_info, log_error, log_warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebConfig {
@@ -165,42 +166,15 @@ impl WebServer {
 
 // HTTP Request Logging Middleware
 async fn log_requests(req: Request, next: Next) -> impl IntoResponse {
-    use crate::log_both;
-
     let method = req.method().clone();
     let uri = req.uri().clone();
     let headers = req.headers().clone();
 
-    // Log incoming request
-    log_both!(
-        info,
-        "🌐 HTTP Request",
-        Some(serde_json::json!({
-            "method": method.to_string(),
-            "uri": uri.to_string(),
-            "path": uri.path(),
-            "query": uri.query().unwrap_or(""),
-            "user_agent": headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or(""),
-            "content_type": headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or(""),
-            "content_length": headers.get("content-length").and_then(|v| v.to_str().ok()).unwrap_or("0")
-        }))
-    );
 
     let start_time = std::time::Instant::now();
     let response = next.run(req).await;
     let duration = start_time.elapsed();
 
-    // Log response
-    log_both!(
-        info,
-        "📤 HTTP Response",
-        Some(serde_json::json!({
-            "method": method.to_string(),
-            "uri": uri.to_string(),
-            "status": response.status().as_u16(),
-            "duration_ms": duration.as_millis()
-        }))
-    );
 
     response
 }
@@ -230,39 +204,17 @@ async fn get_logs(State(state): State<SharedState>) -> Json<Vec<LogEntry>> {
 }
 
 async fn get_config(State(state): State<SharedState>) -> Json<WebConfig> {
-    use crate::log_both;
-
-    log_both!(debug, "🌐 Configuration requested via web API", None);
 
     let app_state = match state.read() {
         Ok(state) => state,
         Err(e) => {
-            log_both!(
-                error,
-                "❌ Failed to acquire read lock on app state for config request",
-                Some(serde_json::json!({
-                    "error": e.to_string()
-                }))
-            );
+            log_error!("Failed to acquire read lock on app state");
             // Return default config in case of lock failure
             return Json(WebConfig::from(crate::config::Config::default()));
         }
     };
 
     let web_config = WebConfig::from(app_state.config.clone());
-    log_both!(
-        debug,
-        "📋 Returning current configuration",
-        Some(serde_json::json!({
-            "config": {
-                "temperature_threshold_c": web_config.temperature_threshold_c,
-                "poll_interval_sec": web_config.poll_interval_sec,
-                "base_cooldown_sec": web_config.base_cooldown_sec,
-                "enable_logging": web_config.enable_logging,
-                "log_file_path": web_config.log_file_path
-            }
-        }))
-    );
 
     Json(web_config)
 }
@@ -272,33 +224,13 @@ async fn update_config(
     State(state): State<SharedState>,
     Json(web_config): Json<WebConfig>,
 ) -> impl IntoResponse {
-    use crate::log_both;
-
-    log_both!(
-        info,
-        "🌐 Received configuration update request via web API",
-        Some(serde_json::json!({
-            "new_config": {
-                "temperature_threshold_c": web_config.temperature_threshold_c,
-                "poll_interval_sec": web_config.poll_interval_sec,
-                "base_cooldown_sec": web_config.base_cooldown_sec,
-                "enable_logging": web_config.enable_logging,
-                "log_file_path": web_config.log_file_path
-            }
-        }))
-    );
+    log_info!("Configuration update request received");
 
     // Get write lock on shared state
     let mut app_state = match state.write() {
         Ok(state) => state,
         Err(e) => {
-            log_both!(
-                error,
-                "❌ Failed to acquire write lock on app state",
-                Some(serde_json::json!({
-                    "error": e.to_string()
-                }))
-            );
+            log_error!("Failed to acquire write lock on app state");
             return Json(serde_json::json!({
                 "success": false,
                 "error": "Internal server error: Failed to acquire state lock"
@@ -307,37 +239,13 @@ async fn update_config(
     };
 
     // Log the current config for comparison
-    log_both!(
-        debug,
-        "📋 Current configuration before update",
-        Some(serde_json::json!({
-            "current_config": {
-                "temperature_threshold_c": app_state.config.temperature_threshold_c,
-                "poll_interval_sec": app_state.config.poll_interval_sec,
-                "base_cooldown_sec": app_state.config.base_cooldown_sec,
-                "enable_logging": app_state.config.enable_logging,
-                "log_file_path": app_state.config.log_file_path
-            }
-        }))
-    );
 
     // Convert web config to internal config
     let updated_config: crate::config::Config = web_config.into();
 
     // Validate new configuration
     if let Err(e) = updated_config.validate() {
-        log_both!(
-            warn,
-            "⚠️ Configuration validation failed",
-            Some(serde_json::json!({
-                "validation_error": e.to_string(),
-                "rejected_config": {
-                    "temperature_threshold_c": updated_config.temperature_threshold_c,
-                    "poll_interval_sec": updated_config.poll_interval_sec,
-                    "base_cooldown_sec": updated_config.base_cooldown_sec
-                }
-            }))
-        );
+        log_warn!("Configuration validation failed", serde_json::json!({"error": format!("{}", e)}));
 
         return Json(serde_json::json!({
             "success": false,
@@ -351,13 +259,7 @@ async fn update_config(
         let mut config_guard = match app_state.config_handle.write() {
             Ok(guard) => guard,
             Err(e) => {
-                log_both!(
-                    error,
-                    "❌ Failed to update shared configuration state",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    }))
-                );
+                log_error!("Failed to update shared configuration state");
 
                 return Json(serde_json::json!({
                     "success": false,
@@ -370,7 +272,7 @@ async fn update_config(
     }
 
     app_state.config = updated_config.clone();
-    log_both!(info, "✅ Configuration updated in memory", None);
+    log_info!("Configuration updated in memory");
 
     // Save to file with detailed logging
     if let Err(e) = app_state.config.save() {
@@ -378,20 +280,7 @@ async fn update_config(
             *config_guard = previous_snapshot.clone();
         }
         app_state.config = previous_snapshot;
-        log_both!(
-            error,
-            "❌ Failed to persist configuration to file",
-            Some(serde_json::json!({
-                "error": e.to_string(),
-                "attempted_config": {
-                    "temperature_threshold_c": app_state.config.temperature_threshold_c,
-                    "poll_interval_sec": app_state.config.poll_interval_sec,
-                    "base_cooldown_sec": app_state.config.base_cooldown_sec,
-                    "enable_logging": app_state.config.enable_logging,
-                    "log_file_path": app_state.config.log_file_path
-                }
-            }))
-        );
+        log_error!("Failed to persist configuration to file", serde_json::json!({"error": format!("{}", e)}));
 
         return Json(serde_json::json!({
             "success": false,
@@ -399,11 +288,7 @@ async fn update_config(
         }));
     }
 
-    log_both!(
-        info,
-        "💾 Configuration successfully persisted to file",
-        None
-    );
+    log_info!("Configuration successfully persisted to file");
 
 
     Json(serde_json::json!({

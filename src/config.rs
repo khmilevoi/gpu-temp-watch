@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use crate::{log_info, log_error, log_warn};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -18,7 +19,7 @@ impl Default for Config {
             poll_interval_sec: 20,
             base_cooldown_sec: 20,
             enable_logging: true,
-            log_file_path: Some("./Logs/GpuTempWatch.log".to_string()),
+            log_file_path: Some("./Logs/gpu-temp-watch.log".to_string()),
         }
     }
 }
@@ -30,69 +31,32 @@ impl Config {
         if config_path.exists() {
             let config_str = fs::read_to_string(&config_path)?;
             let config: Config = serde_json::from_str(&config_str)?;
-            println!("📋 Config loaded from: {:?}", config_path);
+            log_info!("Config loaded", serde_json::json!({"path": config_path.display().to_string()}));
             Ok(config)
         } else {
             let config = Config::default();
             config.save()?;
-            println!("📋 Created default config at: {:?}", config_path);
+            log_info!("Created default config", serde_json::json!({"path": config_path.display().to_string()}));
             Ok(config)
         }
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::log_both;
-
         let config_path = Self::get_config_path();
 
-        log_both!(
-            info,
-            "💾 Starting configuration save process",
-            Some(serde_json::json!({
-                "config_path": config_path.to_string_lossy(),
-                "config_data": {
-                    "temperature_threshold_c": self.temperature_threshold_c,
-                    "poll_interval_sec": self.poll_interval_sec,
-                    "base_cooldown_sec": self.base_cooldown_sec,
-                    "enable_logging": self.enable_logging,
-                    "log_file_path": self.log_file_path
-                }
-            }))
-        );
 
         // Validate configuration before saving
         if let Err(e) = self.validate() {
-            log_both!(
-                error,
-                "❌ Configuration validation failed before saving",
-                Some(serde_json::json!({
-                    "error": e.to_string(),
-                    "config_path": config_path.to_string_lossy()
-                }))
-            );
+            log_error!("Configuration validation failed", serde_json::json!({"error": format!("{}", e)}));
             return Err(e);
         }
 
         // Check if parent directory exists and create if necessary
         if let Some(parent) = config_path.parent() {
             if !parent.exists() {
-                log_both!(
-                    info,
-                    "📁 Creating parent directory for config",
-                    Some(serde_json::json!({
-                        "parent_dir": parent.to_string_lossy()
-                    }))
-                );
 
                 if let Err(e) = fs::create_dir_all(parent) {
-                    log_both!(
-                        error,
-                        "❌ Failed to create parent directory",
-                        Some(serde_json::json!({
-                            "parent_dir": parent.to_string_lossy(),
-                            "error": e.to_string()
-                        }))
-                    );
+                    log_error!("Failed to create directory", serde_json::json!({"error": format!("{}", e)}));
                     return Err(e.into());
                 }
             }
@@ -101,24 +65,9 @@ impl Config {
         // Check file permissions before writing
         if config_path.exists() {
             let metadata = fs::metadata(&config_path)?;
-            log_both!(
-                debug,
-                "📄 Existing config file metadata",
-                Some(serde_json::json!({
-                    "file_size": metadata.len(),
-                    "readonly": metadata.permissions().readonly(),
-                    "modified": metadata.modified().map(|t| format!("{:?}", t)).unwrap_or_else(|_| "unknown".to_string())
-                }))
-            );
 
             if metadata.permissions().readonly() {
-                log_both!(
-                    error,
-                    "❌ Config file is read-only",
-                    Some(serde_json::json!({
-                        "config_path": config_path.to_string_lossy()
-                    }))
-                );
+                log_error!("Config file is read-only");
                 return Err("Configuration file is read-only".into());
             }
         }
@@ -126,23 +75,10 @@ impl Config {
         // Serialize configuration to JSON
         let config_str = match serde_json::to_string_pretty(self) {
             Ok(json_str) => {
-                log_both!(
-                    debug,
-                    "✅ Configuration serialized to JSON",
-                    Some(serde_json::json!({
-                        "json_length": json_str.len()
-                    }))
-                );
                 json_str
             }
             Err(e) => {
-                log_both!(
-                    error,
-                    "❌ Failed to serialize configuration to JSON",
-                    Some(serde_json::json!({
-                        "error": e.to_string()
-                    }))
-                );
+                log_error!("Failed to serialize config", serde_json::json!({"error": format!("{}", e)}));
                 return Err(e.into());
             }
         };
@@ -150,54 +86,25 @@ impl Config {
         // Write to file
         match fs::write(&config_path, &config_str) {
             Ok(_) => {
-                log_both!(
-                    info,
-                    "✅ Configuration saved successfully",
-                    Some(serde_json::json!({
-                        "config_path": config_path.to_string_lossy(),
-                        "file_size": config_str.len()
-                    }))
-                );
+                log_info!("Configuration saved", serde_json::json!({"path": config_path.display().to_string()}));
 
                 // Verify the file was written correctly
                 match fs::read_to_string(&config_path) {
                     Ok(read_back) => {
                         if read_back == config_str {
-                            log_both!(debug, "✅ File verification successful", None);
                         } else {
-                            log_both!(
-                                warn,
-                                "⚠️ File verification failed - content mismatch",
-                                Some(serde_json::json!({
-                                    "expected_length": config_str.len(),
-                                    "actual_length": read_back.len()
-                                }))
-                            );
+                            log_warn!("File verification failed");
                         }
                     }
                     Err(e) => {
-                        log_both!(
-                            warn,
-                            "⚠️ Could not verify saved file",
-                            Some(serde_json::json!({
-                                "error": e.to_string()
-                            }))
-                        );
+                        log_warn!("Could not verify saved file", serde_json::json!({"error": format!("{}", e)}));
                     }
                 }
 
                 Ok(())
             }
             Err(e) => {
-                log_both!(
-                    error,
-                    "❌ Failed to write configuration file",
-                    Some(serde_json::json!({
-                        "config_path": config_path.to_string_lossy(),
-                        "error": e.to_string(),
-                        "error_kind": format!("{:?}", e.kind())
-                    }))
-                );
+                log_error!("Failed to write config file", serde_json::json!({"error": format!("{}", e)}));
                 Err(e.into())
             }
         }
@@ -218,10 +125,7 @@ impl Config {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.temperature_threshold_c = new_threshold;
         self.save()?;
-        println!(
-            "🌡️  Temperature threshold updated to: {:.1}°C",
-            new_threshold
-        );
+        log_info!("Temperature threshold updated", serde_json::json!({"threshold": new_threshold}));
         Ok(())
     }
 
@@ -231,7 +135,7 @@ impl Config {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.poll_interval_sec = new_interval;
         self.save()?;
-        println!("⏱️  Poll interval updated to: {}s", new_interval);
+        log_info!("Poll interval updated", serde_json::json!({"interval": new_interval}));
         Ok(())
     }
 

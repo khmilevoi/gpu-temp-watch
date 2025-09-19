@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use tracing::{info, warn};
+use crate::{log_info, log_error, log_warn, log_debug};
 
 use windows::{
     core::PCWSTR,
@@ -22,7 +22,7 @@ impl GuiDialogs {
 
         #[cfg(not(windows))]
         {
-            println!("INFO: {}: {}", title, message);
+            log_info!("GUI Info dialog", serde_json::json!({"title": title, "message": message}));
         }
     }
 
@@ -33,7 +33,7 @@ impl GuiDialogs {
 
         #[cfg(not(windows))]
         {
-            println!("WARNING: {}: {}", title, message);
+            log_warn!("GUI Warning dialog", serde_json::json!({"title": title, "message": message}));
         }
     }
 
@@ -44,7 +44,7 @@ impl GuiDialogs {
 
         #[cfg(not(windows))]
         {
-            println!("ERROR: {}: {}", title, message);
+            log_error!("GUI Error dialog", serde_json::json!({"title": title, "message": message}));
         }
     }
 
@@ -59,7 +59,7 @@ impl GuiDialogs {
 
         #[cfg(not(windows))]
         {
-            println!("QUESTION: {}: {} (assuming YES)", title, message);
+            log_info!("GUI Question dialog (assuming YES)", serde_json::json!({"title": title, "message": message}));
             true
         }
     }
@@ -170,7 +170,7 @@ impl GuiDialogs {
             • 🌡️ Temperature Threshold: {:.1}°C\n\
             • ⏱️ Poll Interval: {} seconds\n\
             • 📂 Config File: ./config.json\n\
-            • 📋 Log File: ./Logs/GpuTempWatch.log\n\n\
+            • 📋 Log File: ./Logs/gpu-temp-watch.log\n\n\
             🔧 How to Change Settings:\n\
             1. Click 'Open Config File' from the tray menu\n\
             2. Edit the values in config.json\n\
@@ -271,14 +271,14 @@ impl GuiManager {
                 "Operation Successful",
                 &format!("✅ {} completed successfully", operation),
             );
-            info!("GUI operation successful: {}", operation);
+            log_debug!("GUI operation successful", serde_json::json!({"operation": operation}));
         } else {
             let error = error_msg.unwrap_or("Unknown error");
             GuiDialogs::show_error(
                 "Operation Failed",
                 &format!("❌ {} failed:\n\n{}", operation, error),
             );
-            warn!("GUI operation failed: {}: {}", operation, error);
+            log_error!("GUI operation failed", serde_json::json!({"operation": operation, "error": format!("{}", error)}));
         }
     }
 }

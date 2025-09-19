@@ -1,5 +1,4 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{error, info, warn};
 use windows::{
     core::{HSTRING, PCWSTR},
     Data::Xml::Dom,
@@ -10,6 +9,7 @@ use windows::{
     },
     UI::Notifications::{ToastNotification, ToastNotificationManager},
 };
+use crate::{log_info, log_error, log_warn, log_debug};
 
 pub struct NotificationManager {
     last_notification_time: Option<u64>,
@@ -42,7 +42,6 @@ impl NotificationManager {
         }
     }
 
-    #[tracing::instrument]
     fn create_toast_notification(
         title: &str,
         message: &str,
@@ -78,10 +77,10 @@ impl NotificationManager {
             // Show the toast
             toast_manager.Show(&toast)?;
 
-            info!(
-                "✅ WinRT toast notification sent successfully: {} - {}",
-                title, message
-            );
+            log_debug!("WinRT toast notification sent successfully", serde_json::json!({
+                "title": title,
+                "message": message
+            }));
             Ok(())
         }
     }
@@ -117,7 +116,6 @@ impl NotificationManager {
         cooldown.min(self.max_cooldown_sec)
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn send_temperature_alert(
         &mut self,
         sensor_name: &str,
@@ -131,9 +129,7 @@ impl NotificationManager {
         );
 
         // Console notification with visual alert
-        println!("🔥🔥🔥 TEMPERATURE ALERT 🔥🔥🔥");
-        println!("⚠️  {}", message);
-        println!("🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥");
+        log_warn!("TEMPERATURE ALERT", serde_json::json!({"message": message}));
 
         // Try to send Windows toast notification using tokio::task::spawn_blocking for COM/WinRT
         let toast_title = title.to_string();
@@ -145,20 +141,20 @@ impl NotificationManager {
         .await
         {
             Ok(Ok(_)) => {
-                info!("✅ WinRT toast notification sent successfully");
-                println!("📱 Toast notification: {}", message);
+                log_info!("Toast notification sent", serde_json::json!({"message": message}));
             }
             Ok(Err(e)) => {
-                warn!("⚠️  Failed to send WinRT toast notification: {}", e);
-                println!("❌ Toast failed: {}", e);
-                warn!("🔄 Falling back to message box notification");
+                log_error!("Failed to send WinRT toast notification, falling back", serde_json::json!({
+                    "error": format!("{}", e),
+                    "fallback": "message_box"
+                }));
 
                 // Always fallback to message box for alerts
-                println!("💬 Showing message box instead");
+                log_info!("Showing message box fallback");
                 Self::show_message_box(title, &message, MB_ICONWARNING);
             }
             Err(e) => {
-                error!("❌ Tokio spawn_blocking error: {}", e);
+                log_error!("Tokio spawn_blocking error", serde_json::json!({"error": format!("{}", e)}));
                 Self::show_message_box(title, &message, MB_ICONWARNING);
             }
         }
@@ -166,22 +162,20 @@ impl NotificationManager {
         // For debugging: log to console instead of showing modal dialogs that block tray
         #[cfg(debug_assertions)]
         {
-            println!(
-                "🔔 DEBUG: Would show GUI dialog - Temperature Alert: {}",
-                message
-            );
+            log_debug!("Would show GUI dialog - Temperature Alert", serde_json::json!({
+                "message": message
+            }));
         }
 
         self.cooldown_level += 1;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn send_status_notification(
         &self,
         message: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("ℹ️  Status: {}", message);
+        log_info!("Status notification (async)", serde_json::json!({"message": message}));
 
         // Try to send Windows toast notification for status updates
         let toast_message = message.to_string();
@@ -192,10 +186,10 @@ impl NotificationManager {
         .await
         {
             Ok(Ok(_)) => {
-                info!("✅ Status WinRT toast notification sent");
+                log_debug!("Status WinRT toast notification sent");
             }
             Ok(Err(e)) => {
-                warn!("⚠️  Failed to send status WinRT toast notification: {}", e);
+                log_error!("Failed to send status WinRT toast notification", serde_json::json!({"error": format!("{}", e)}));
 
                 // For startup notifications, show message box as well
                 if message.contains("started") {
@@ -203,10 +197,9 @@ impl NotificationManager {
                 }
             }
             Err(e) => {
-                error!(
-                    "❌ Tokio spawn_blocking error for status notification: {}",
-                    e
-                );
+                log_error!("Tokio spawn_blocking error for status notification", serde_json::json!({
+                    "error": format!("{}", e)
+                }));
                 if message.contains("started") {
                     Self::show_message_box("GPU Temperature Monitor", message, MB_ICONINFORMATION);
                 }
@@ -218,7 +211,7 @@ impl NotificationManager {
 
     // Temporary sync wrapper for backward compatibility
     pub fn send_status_notification_sync(&self, message: &str) {
-        println!("ℹ️  Status: {}", message);
+        log_info!("Status notification (async)", serde_json::json!({"message": message}));
 
         // For now, just log to console and use fallback message box for critical notifications
         if message.contains("started") || message.contains("Error") {

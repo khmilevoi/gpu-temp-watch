@@ -1,6 +1,6 @@
 use nvml_wrapper::Nvml;
 use std::error::Error;
-use tracing::{debug, error, info, warn};
+use crate::{log_info, log_error, log_warn};
 
 #[derive(Debug, Clone)]
 pub struct GpuTempReading {
@@ -18,23 +18,24 @@ impl TempMonitor {
     pub fn new() -> Self {
         match Nvml::init() {
             Ok(nvml) => {
-                info!("✅ NVML initialized successfully");
+                log_info!("NVML initialized successfully");
                 Self { nvml: Some(nvml) }
             }
             Err(e) => {
-                error!("❌ Failed to initialize NVML: {}", e);
-                warn!("GPU temperature monitoring will not be available");
+                log_error!("Failed to initialize NVML", serde_json::json!({
+                    "error": format!("{}", e),
+                    "warning": "GPU temperature monitoring will not be available"
+                }));
                 Self { nvml: None }
             }
         }
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn get_gpu_temperatures(&self) -> Result<Vec<GpuTempReading>, Box<dyn Error>> {
         let nvml = match &self.nvml {
             Some(nvml) => nvml,
             None => {
-                error!("❌ NVML not initialized - cannot read GPU temperatures");
+                log_error!("NVML not initialized - cannot read GPU temperatures");
                 return Err("NVML not initialized".into());
             }
         };
@@ -44,17 +45,16 @@ impl TempMonitor {
 
         let device_count = match nvml.device_count() {
             Ok(count) => {
-                debug!("Found {} GPU devices", count);
                 count
             }
             Err(e) => {
-                error!("❌ Failed to get GPU device count: {}", e);
+                log_error!("Failed to get GPU device count", serde_json::json!({"error": format!("{}", e)}));
                 return Err(format!("Failed to get GPU device count: {}", e).into());
             }
         };
 
         if device_count == 0 {
-            warn!("⚠️  No GPU devices found");
+            log_warn!("No GPU devices found");
             return Ok(gpu_temps);
         }
 
@@ -65,14 +65,12 @@ impl TempMonitor {
                         .name()
                         .unwrap_or_else(|_| format!("GPU {}", device_index));
 
-                    debug!("🔍 Attempting to read temperature for {}", name);
 
                     match device
                         .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
                     {
                         Ok(temp) => {
                             if temp > 0 && temp < 200 {  // Sanity check for reasonable temperature range
-                                debug!("📊 {}: {}°C", name, temp);
 
                                 let reading = GpuTempReading {
                                     sensor_name: name,
@@ -82,18 +80,28 @@ impl TempMonitor {
                                 };
                                 gpu_temps.push(reading);
                             } else {
-                                warn!("⚠️  Invalid temperature reading for {}: {}°C (out of range)", name, temp);
+                                log_warn!("Invalid temperature reading (out of range)", serde_json::json!({
+                                    "sensor": name,
+                                    "temperature": temp,
+                                    "valid_range": "0-200°C"
+                                }));
                                 errors.push(format!("Invalid temperature for {}: {}°C", name, temp));
                             }
                         }
                         Err(e) => {
-                            warn!("⚠️  Failed to read temperature for {}: {}", name, e);
+                            log_error!("Failed to read temperature", serde_json::json!({
+                                "sensor": name,
+                                "error": format!("{}", e)
+                            }));
                             errors.push(format!("Failed to read temperature for {}: {}", name, e));
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("⚠️  Failed to access GPU device {}: {}", device_index, e);
+                    log_error!("Failed to access GPU device", serde_json::json!({
+                        "device_index": device_index,
+                        "error": format!("{}", e)
+                    }));
                     errors.push(format!("Failed to access GPU device {}: {}", device_index, e));
                 }
             }
@@ -105,27 +113,27 @@ impl TempMonitor {
             } else {
                 format!("No GPU temperature readings available. Errors: {}", errors.join("; "))
             };
-            warn!("⚠️  {}", error_msg);
-            
-            // Don't return an error if we simply have no readings, just log it
-            // This allows the application to continue running
-            info!("📝 Continuing monitoring despite no temperature readings");
+            log_warn!("No GPU temperature readings available", serde_json::json!({
+                "errors": errors,
+                "action": "continuing_monitoring"
+            }));
         } else {
-            info!("✅ Successfully read {} GPU temperature(s)", gpu_temps.len());
+            log_info!("Successfully read GPU temperatures", serde_json::json!({
+                "count": gpu_temps.len(),
+                "sensors": gpu_temps.iter().map(|r| &r.sensor_name).collect::<Vec<_>>()
+            }));
         }
 
         Ok(gpu_temps)
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn test_connection(&self) -> Result<(), Box<dyn Error>> {
         match &self.nvml {
             Some(nvml) => {
                 let device_count = nvml.device_count()?;
-                info!(
-                    "✅ NVML connection successful - {} GPU devices found",
-                    device_count
-                );
+                log_info!("NVML connection successful", serde_json::json!({
+                    "gpu_devices_found": device_count
+                }));
                 Ok(())
             }
             None => Err("NVML not initialized".into()),

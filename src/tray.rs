@@ -2,7 +2,6 @@ use std::error::Error;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tracing::{error, info, warn};
 use tray_icon::Icon;
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -14,6 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use image::RgbaImage;
+use crate::{log_info, log_error, log_warn, log_debug};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayMessage {
@@ -67,7 +67,7 @@ enum IconState {
 
 impl SystemTray {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        println!("🔧 Creating new tray with dedicated event loop thread...");
+        log_info!("Creating new tray with dedicated event loop thread");
 
         let (event_sender, event_receiver) = mpsc::channel::<TrayMessage>();
         let (command_sender, command_receiver) = mpsc::channel::<TrayCommand>();
@@ -80,13 +80,13 @@ impl SystemTray {
                 if let Err(err) =
                     run_tray_event_loop(command_receiver, thread_event_sender, ready_tx)
                 {
-                    error!("Tray thread terminated: {}", err);
+                    log_error!("Tray thread terminated", serde_json::json!({"error": format!("{}", err)}));
                 }
             })?;
 
         match ready_rx.recv() {
             Ok(Ok(())) => {
-                println!("✅ Tray thread initialized");
+                log_info!("Tray thread initialized");
             }
             Ok(Err(err)) => {
                 return Err(Box::new(err));
@@ -119,12 +119,12 @@ impl SystemTray {
                 }
 
                 self.last_message = Some((message.clone(), now));
-                println!("📬 Received tray message: {:?}", message);
+                log_debug!("Received tray message", serde_json::json!({"message": format!("{:?}", message)}));
                 Some(message)
             }
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
-                warn!("❌ Tray message channel disconnected");
+                log_error!("Tray message channel disconnected");
                 None
             }
         }
@@ -154,11 +154,11 @@ impl SystemTray {
                 IconState::Cool => "🟢 COOL",
             };
 
-            println!(
-                "🌡️ Temperature: {:.1}°C - State: {} (icon update requested)",
-                temperature, state_str
-            );
-            info!("Tray icon update requested for state: {:?}", new_state);
+            log_debug!("Temperature icon update", serde_json::json!({
+                "temperature": temperature,
+                "state": state_str
+            }));
+            log_debug!("Tray icon update requested", serde_json::json!({"state": format!("{:?}", new_state)}));
 
             self.current_icon_state = new_state;
         }
@@ -176,11 +176,11 @@ impl SystemTray {
         if std::path::Path::new(icon_filename).exists() {
             match Icon::from_path(icon_filename, None) {
                 Ok(icon) => {
-                    info!("✅ Loaded {} icon", icon_filename);
+                    log_debug!("Loaded icon", serde_json::json!({"icon": icon_filename}));
                     return Ok(icon);
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to load {}: {}", icon_filename, e);
+                    log_warn!("Failed to load icon", serde_json::json!({"icon": icon_filename, "error": format!("{}", e)}));
                 }
             }
         }
@@ -188,16 +188,16 @@ impl SystemTray {
         if std::path::Path::new("icons/icon.ico").exists() {
             match Icon::from_path("icons/icon.ico", None) {
                 Ok(icon) => {
-                    info!("✅ Loaded fallback icons/icon.ico");
+                    log_debug!("Loaded fallback icon", serde_json::json!({"icon": "icons/icon.ico"}));
                     return Ok(icon);
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to load icons/icon.ico: {}", e);
+                    log_warn!("Failed to load fallback icon", serde_json::json!({"icon": "icons/icon.ico", "error": format!("{}", e)}));
                 }
             }
         }
 
-        warn!("⚠️ No icon files found, creating programmatic icon");
+        log_warn!("No icon files found, creating programmatic icon");
         let rgba_image = Self::create_simple_rgba_image_for_state(state);
         let icon = Icon::from_rgba(
             rgba_image.as_raw().clone(),
@@ -241,12 +241,12 @@ impl SystemTray {
 impl Drop for SystemTray {
     fn drop(&mut self) {
         if let Err(err) = self.command_sender.send(TrayCommand::Shutdown) {
-            warn!("Tray command channel closed during shutdown: {}", err);
+            log_warn!("Tray command channel closed during shutdown", serde_json::json!({"error": format!("{}", err)}));
         }
 
         if let Some(handle) = self.thread_handle.take() {
             if let Err(e) = handle.join() {
-                warn!("Failed to join tray thread: {:?}", e);
+                log_warn!("Failed to join tray thread", serde_json::json!({"error": format!("{:?}", e)}));
             }
         }
 
@@ -261,15 +261,15 @@ fn run_tray_event_loop(
 ) -> Result<(), Box<dyn Error>> {
     let menu_sender = event_sender.clone();
     MenuEvent::set_event_handler(Some(Box::new(move |event: MenuEvent| {
-        println!("🖱️ Menu event received: {:?}", event);
-        info!("Tray menu event: {}", event.id().0);
+        log_debug!("Menu event received", serde_json::json!({"event": format!("{:?}", event)}));
+        log_debug!("Tray menu event", serde_json::json!({"id": event.id().0}));
 
         if let Some(msg) = menu_id_to_message(event.id().0.as_str()) {
             if let Err(e) = menu_sender.send(msg) {
-                warn!("❌ Failed to send tray message: {}", e);
+                log_error!("Failed to send tray message", serde_json::json!({"error": format!("{}", e)}));
             }
         } else {
-            println!("🤷 Unknown menu item: {}", event.id().0);
+            log_warn!("Unknown menu item", serde_json::json!({"id": event.id().0}));
         }
     })));
 
@@ -279,14 +279,14 @@ fn run_tray_event_loop(
             button: MouseButton::Right,
             ..
         } => {
-            println!("🖱️ Right click detected on tray icon, showing menu");
-            info!("Tray context menu requested (right click)");
+            log_debug!("Right click detected on tray icon, showing menu");
+            log_debug!("Tray context menu requested (right click)");
         }
         TrayIconEvent::DoubleClick { .. } => {
-            println!("🖱️ Double click detected on tray icon");
-            info!("Tray icon double-clicked, opening dashboard");
+            log_debug!("Double click detected on tray icon");
+            log_debug!("Tray icon double-clicked, opening dashboard");
             if let Err(e) = click_sender.send(TrayMessage::OpenDashboard) {
-                warn!("❌ Failed to send double-click message: {}", e);
+                log_error!("Failed to send double-click message", serde_json::json!({"error": format!("{}", e)}));
             }
         }
         _ => {}
@@ -349,7 +349,7 @@ fn run_tray_event_loop(
         }
     };
 
-    info!("✅ System tray initialized with non-blocking event handler");
+    log_info!("System tray initialized with non-blocking event handler");
     let _ = ready_sender.send(Ok(()));
 
     let mut current_state = IconState::Cool;
@@ -364,22 +364,22 @@ fn run_tray_event_loop(
                     match SystemTray::load_icon_for_state(&state) {
                         Ok(icon) => {
                             if let Err(e) = tray_icon.set_icon(Some(icon)) {
-                                warn!("⚠️ Failed to set tray icon: {}", e);
+                                log_warn!("Failed to set tray icon", serde_json::json!({"error": format!("{}", e)}));
                             } else {
                                 current_state = state;
                             }
                         }
-                        Err(e) => warn!("⚠️ Failed to load tray icon: {}", e),
+                        Err(e) => log_warn!("Failed to load tray icon", serde_json::json!({"error": format!("{}", e)})),
                     }
                 }
             }
             Ok(TrayCommand::Shutdown) => {
-                info!("Tray thread received shutdown signal");
+                log_info!("Tray thread received shutdown signal");
                 break;
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
-                warn!("Tray command channel disconnected");
+                log_error!("Tray command channel disconnected");
                 break;
             }
         }
