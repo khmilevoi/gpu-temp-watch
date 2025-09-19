@@ -54,6 +54,9 @@
         .status-hot { background: #F44336; }
         .status-warm { background: #FF9800; }
         .status-cool { background: #4CAF50; }
+        .status-unknown { background: #9E9E9E; }
+        .status-connected { background: #4CAF50; }
+        .status-error { background: #F44336; }
 
         .grid {
             display: grid;
@@ -238,8 +241,20 @@
             border-color: #f5c6cb;
         }
 
+        .alert-info {
+            color: #0c5460;
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
+        }
+
         .hidden {
             display: none;
+        }
+
+        .connection-status {
+            font-size: 0.9em;
+            margin-top: 10px;
+            text-align: center;
         }
 
         @media (max-width: 768px) {
@@ -265,6 +280,11 @@
                 <span class="status-badge status-active" id="monitoringStatus">Active</span>
                 <span class="status-badge status-cool" id="tempStatus">Cool</span>
                 <span class="status-badge" id="autostartStatus">Autostart: Unknown</span>
+                <span class="status-badge status-unknown" id="gpuStatus">GPU: Unknown</span>
+            </div>
+            <div class="connection-status">
+                <span id="lastUpdate">Last update: --</span> | 
+                <span id="connectionStatus">Connecting...</span>
             </div>
         </div>
 
@@ -336,12 +356,32 @@
     <script>
         let currentConfig = {};
         let currentStatus = {};
+        let pollingInterval = null;
+        let isConnected = false;
 
         // Initialize the page
         document.addEventListener('DOMContentLoaded', function() {
             refreshData();
-            setInterval(refreshStatus, 5000); // Update status every 5 seconds
+            startPolling();
         });
+
+        function startPolling() {
+            // Poll every 5 seconds
+            pollingInterval = setInterval(refreshStatus, 5000);
+            updateConnectionStatus('Polling every 5 seconds');
+        }
+
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        function updateConnectionStatus(message) {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = message;
+        }
 
         async function refreshData() {
             await Promise.all([
@@ -354,30 +394,48 @@
         async function refreshStatus() {
             try {
                 const response = await fetch('/api/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const status = await response.json();
                 currentStatus = status;
                 updateStatusDisplay(status);
+                
+                if (!isConnected) {
+                    isConnected = true;
+                    showAlert('Connected to GPU Temperature Monitor', 'success');
+                }
+                updateConnectionStatus('Connected - Polling every 5 seconds');
             } catch (error) {
                 console.error('Failed to refresh status:', error);
-                showAlert('Failed to refresh status', 'danger');
+                if (isConnected) {
+                    isConnected = false;
+                    showAlert('Connection lost - retrying...', 'danger');
+                }
+                updateConnectionStatus(`Connection error: ${error.message}`);
             }
         }
 
         async function refreshConfig() {
             try {
                 const response = await fetch('/api/config');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const config = await response.json();
                 currentConfig = config;
                 updateConfigForm(config);
             } catch (error) {
                 console.error('Failed to refresh config:', error);
-                showAlert('Failed to refresh config', 'danger');
             }
         }
 
         async function refreshLogs() {
             try {
                 const response = await fetch('/api/logs');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const logs = await response.json();
                 updateLogsDisplay(logs);
             } catch (error) {
@@ -387,7 +445,14 @@
 
         function updateStatusDisplay(status) {
             // Update temperature
-            document.getElementById('currentTemp').textContent = status.temperature.toFixed(1) + '°C';
+            const tempElement = document.getElementById('currentTemp');
+            if (status.temperature !== null && status.temperature !== undefined) {
+                tempElement.textContent = status.temperature.toFixed(1) + '°C';
+                tempElement.style.color = '#333';
+            } else {
+                tempElement.textContent = 'N/A';
+                tempElement.style.color = '#999';
+            }
             document.getElementById('thresholdValue').textContent = status.threshold.toFixed(1) + '°C';
 
             // Update monitoring status
@@ -409,15 +474,35 @@
 
             // Update temperature status
             const tempStatus = document.getElementById('tempStatus');
-            if (status.temperature > status.threshold) {
-                tempStatus.textContent = 'Hot';
-                tempStatus.className = 'status-badge status-hot';
-            } else if (status.temperature > status.threshold - 10) {
-                tempStatus.textContent = 'Warm';
-                tempStatus.className = 'status-badge status-warm';
+            if (status.temperature !== null && status.temperature !== undefined) {
+                if (status.temperature > status.threshold) {
+                    tempStatus.textContent = 'Hot';
+                    tempStatus.className = 'status-badge status-hot';
+                } else if (status.temperature > status.threshold - 10) {
+                    tempStatus.textContent = 'Warm';
+                    tempStatus.className = 'status-badge status-warm';
+                } else {
+                    tempStatus.textContent = 'Cool';
+                    tempStatus.className = 'status-badge status-cool';
+                }
             } else {
-                tempStatus.textContent = 'Cool';
-                tempStatus.className = 'status-badge status-cool';
+                tempStatus.textContent = 'Unknown';
+                tempStatus.className = 'status-badge status-unknown';
+            }
+
+            // Update GPU connection status
+            const gpuStatus = document.getElementById('gpuStatus');
+            if (status.gpu_connection_status) {
+                gpuStatus.textContent = `GPU: ${status.gpu_connection_status}`;
+                if (status.gpu_connection_status.toLowerCase().includes('connected') || 
+                    status.gpu_connection_status.toLowerCase().includes('ok')) {
+                    gpuStatus.className = 'status-badge status-connected';
+                } else if (status.gpu_connection_status.toLowerCase().includes('error') ||
+                          status.gpu_connection_status.toLowerCase().includes('failed')) {
+                    gpuStatus.className = 'status-badge status-error';
+                } else {
+                    gpuStatus.className = 'status-badge status-unknown';
+                }
             }
 
             // Update autostart status
@@ -429,6 +514,11 @@
             const hours = Math.floor(status.uptime_seconds / 3600);
             const minutes = Math.floor((status.uptime_seconds % 3600) / 60);
             document.getElementById('uptimeValue').textContent = `${hours}h ${minutes}m`;
+
+            // Update last update time
+            if (status.last_update) {
+                document.getElementById('lastUpdate').textContent = `Last update: ${status.last_update}`;
+            }
         }
 
         function updateConfigForm(config) {
@@ -477,7 +567,7 @@
                     showAlert(result.message, 'success');
                     await refreshStatus();
                 } else {
-                    showAlert(result.message, 'danger');
+                    showAlert(result.message || result.error, 'danger');
                 }
             } catch (error) {
                 console.error('Failed to toggle monitoring:', error);
@@ -501,7 +591,7 @@
                     showAlert(result.message, 'success');
                     await refreshStatus();
                 } else {
-                    showAlert(result.message, 'danger');
+                    showAlert(result.message || result.error, 'danger');
                 }
             } catch (error) {
                 console.error('Failed to toggle autostart:', error);
@@ -535,7 +625,7 @@
                     showAlert(result.message, 'success');
                     await refreshData();
                 } else {
-                    showAlert(result.message, 'danger');
+                    showAlert(result.message || result.error, 'danger');
                 }
             } catch (error) {
                 console.error('Failed to save config:', error);
@@ -552,9 +642,22 @@
             container.appendChild(alert);
 
             setTimeout(() => {
-                container.removeChild(alert);
+                if (container.contains(alert)) {
+                    container.removeChild(alert);
+                }
             }, 5000);
         }
+
+        // Handle page visibility changes to pause/resume polling
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopPolling();
+                updateConnectionStatus('Paused (tab hidden)');
+            } else {
+                startPolling();
+                refreshData();
+            }
+        });
     </script>
 </body>
 </html>

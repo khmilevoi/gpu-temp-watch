@@ -1,19 +1,14 @@
 use crate::autostart::AutoStart;
 use crate::config::Config;
 use axum::{
-    extract::{
-        ws::{WebSocket, WebSocketUpgrade},
-        Request, State,
-    },
+    extract::{Request, State},
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse},
     routing::{get, post, put},
     Json, Router,
 };
-use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use tokio::sync::broadcast;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -52,11 +47,13 @@ impl Into<Config> for WebConfig {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusResponse {
-    pub temperature: f32,
+    pub temperature: Option<f32>,
     pub threshold: f32,
     pub monitoring_paused: bool,
     pub autostart_enabled: bool,
     pub uptime_seconds: u64,
+    pub last_update: String,
+    pub gpu_connection_status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,48 +63,37 @@ pub struct LogEntry {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct WebSocketMessage {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    pub data: serde_json::Value,
-}
-
 pub type SharedState = Arc<RwLock<AppState>>;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub config: Config,
     pub config_handle: Arc<RwLock<Config>>,
-    pub current_temperature: f32,
+    pub current_temperature: Option<f32>,
     pub monitoring_paused: bool,
     pub autostart_enabled: bool,
     pub uptime_seconds: u64,
     pub recent_logs: Vec<LogEntry>,
-    pub broadcast_tx: broadcast::Sender<WebSocketMessage>,
+    pub last_update: chrono::DateTime<chrono::Local>,
+    pub gpu_connection_status: String,
 }
 
 impl AppState {
-    pub fn new(
-        shared_config: Arc<RwLock<Config>>,
-    ) -> (Self, broadcast::Receiver<WebSocketMessage>) {
+    pub fn new(shared_config: Arc<RwLock<Config>>) -> Self {
         let autostart_enabled = AutoStart::new().map(|a| a.is_installed()).unwrap_or(false);
-        let (broadcast_tx, broadcast_rx) = broadcast::channel(100);
-
         let config = shared_config.read().unwrap().clone();
 
-        let state = Self {
+        Self {
             config,
             config_handle: Arc::clone(&shared_config),
-            current_temperature: 0.0,
+            current_temperature: None,
             monitoring_paused: false,
             autostart_enabled,
             uptime_seconds: 0,
             recent_logs: Vec::new(),
-            broadcast_tx,
-        };
-
-        (state, broadcast_rx)
+            last_update: chrono::Local::now(),
+            gpu_connection_status: "Unknown".to_string(),
+        }
     }
 
     pub fn add_log(&mut self, level: &str, message: &str) {
@@ -117,44 +103,18 @@ impl AppState {
             message: message.to_string(),
         };
 
-        self.recent_logs.push(entry.clone());
+        self.recent_logs.push(entry);
 
         // Keep only last 100 entries
         if self.recent_logs.len() > 100 {
             self.recent_logs.remove(0);
         }
-
-        // Broadcast log update to WebSocket clients
-        let ws_message = WebSocketMessage {
-            msg_type: "log".to_string(),
-            data: serde_json::to_value(&entry).unwrap_or_default(),
-        };
-        let _ = self.broadcast_tx.send(ws_message);
     }
 
-    pub fn broadcast_temperature_update(&self) {
-        let status = StatusResponse {
-            temperature: self.current_temperature,
-            threshold: self.config.temperature_threshold_c,
-            monitoring_paused: self.monitoring_paused,
-            autostart_enabled: self.autostart_enabled,
-            uptime_seconds: self.uptime_seconds,
-        };
-
-        let ws_message = WebSocketMessage {
-            msg_type: "temperature".to_string(),
-            data: serde_json::to_value(&status).unwrap_or_default(),
-        };
-        let _ = self.broadcast_tx.send(ws_message);
-    }
-
-    pub fn broadcast_config_update(&self) {
-        let web_config = WebConfig::from(self.config.clone());
-        let ws_message = WebSocketMessage {
-            msg_type: "config".to_string(),
-            data: serde_json::to_value(&web_config).unwrap_or_default(),
-        };
-        let _ = self.broadcast_tx.send(ws_message);
+    pub fn update_temperature(&mut self, temperature: Option<f32>, status: &str) {
+        self.current_temperature = temperature;
+        self.last_update = chrono::Local::now();
+        self.gpu_connection_status = status.to_string();
     }
 }
 
@@ -170,7 +130,7 @@ pub struct WebServer {
 
 impl WebServer {
     pub fn new(shared_config: Arc<RwLock<Config>>, port: u16) -> Self {
-        let (app_state, _) = AppState::new(Arc::clone(&shared_config));
+        let app_state = AppState::new(Arc::clone(&shared_config));
         let shared_state = Arc::new(RwLock::new(app_state));
 
         Self { shared_state, port }
@@ -191,7 +151,6 @@ impl WebServer {
             .route("/api/config", put(update_config)) // Добавляем PUT для REST стандарта
             .route("/api/action", post(handle_action))
             .route("/health", get(health_check))
-            .route("/ws", get(websocket_handler))
             .layer(middleware::from_fn(log_requests))
             .layer(TraceLayer::new_for_http())
             .with_state(self.shared_state);
@@ -259,6 +218,8 @@ async fn get_status(State(state): State<SharedState>) -> Json<StatusResponse> {
         monitoring_paused: app_state.monitoring_paused,
         autostart_enabled: app_state.autostart_enabled,
         uptime_seconds: app_state.uptime_seconds,
+        last_update: app_state.last_update.format("%Y-%m-%d %H:%M:%S").to_string(),
+        gpu_connection_status: app_state.gpu_connection_status.clone(),
     };
     Json(status)
 }
@@ -444,19 +405,13 @@ async fn update_config(
         None
     );
 
-    // Broadcast config update to WebSocket clients
-    app_state.broadcast_config_update();
-    log_both!(
-        info,
-        "📡 Configuration update broadcasted to WebSocket clients",
-        None
-    );
 
     Json(serde_json::json!({
         "success": true,
         "message": "Configuration updated successfully"
     }))
 }
+
 
 async fn handle_action(
     State(_state): State<SharedState>,
@@ -509,81 +464,6 @@ async fn health_check() -> Json<serde_json::Value> {
     }))
 }
 
-async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> Response {
-    ws.on_upgrade(|socket| handle_websocket(socket, state))
-}
-
-#[tracing::instrument(skip_all)]
-async fn handle_websocket(socket: WebSocket, shared_state: SharedState) {
-    let mut rx = {
-        let state = shared_state.read().unwrap();
-        state.broadcast_tx.subscribe()
-    };
-
-    let (mut sender, mut receiver) = socket.split();
-
-    // Send initial state
-    let initial_message = {
-        let state = shared_state.read().unwrap();
-        let status = StatusResponse {
-            temperature: state.current_temperature,
-            threshold: state.config.temperature_threshold_c,
-            monitoring_paused: state.monitoring_paused,
-            autostart_enabled: state.autostart_enabled,
-            uptime_seconds: state.uptime_seconds,
-        };
-
-        WebSocketMessage {
-            msg_type: "initial".to_string(),
-            data: serde_json::to_value(&status).unwrap_or_default(),
-        }
-    };
-
-    if let Ok(msg_text) = serde_json::to_string(&initial_message) {
-        let _ = sender
-            .send(axum::extract::ws::Message::Text(msg_text))
-            .await;
-    }
-
-    // Handle incoming and outgoing messages
-    let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if let Ok(msg_text) = serde_json::to_string(&msg) {
-                if sender
-                    .send(axum::extract::ws::Message::Text(msg_text))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }
-    });
-
-    let recv_task = tokio::spawn(async move {
-        while let Some(msg) = receiver.next().await {
-            if let Ok(msg) = msg {
-                match msg {
-                    axum::extract::ws::Message::Text(_) => {
-                        // Handle incoming text messages if needed
-                    }
-                    axum::extract::ws::Message::Close(_) => {
-                        break;
-                    }
-                    _ => {}
-                }
-            } else {
-                break;
-            }
-        }
-    });
-
-    // Wait for either task to complete
-    tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
-    }
-}
 
 pub fn open_browser(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
