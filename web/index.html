@@ -165,7 +165,7 @@
         }
 
         .log-container {
-            max-height: 300px;
+            max-height: 600px;
             overflow-y: auto;
             background: #f9f9f9;
             border: 1px solid #ddd;
@@ -173,6 +173,73 @@
             padding: 10px;
             font-family: 'Courier New', monospace;
             font-size: 12px;
+            position: relative;
+        }
+
+        .log-loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .log-loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .log-filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .log-filter-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .log-filter-group label {
+            font-size: 14px;
+            color: #555;
+            font-weight: bold;
+        }
+
+        .log-filter-group select, .log-filter-group input {
+            padding: 5px 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .log-stats {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .load-more-btn {
+            width: 100%;
+            margin-top: 10px;
+            padding: 8px;
+            font-size: 14px;
         }
 
         .log-entry {
@@ -459,13 +526,50 @@
                 </form>
             </div>
 
-            <!-- Recent Logs -->
+            <!-- All Logs with Pagination -->
             <div class="card" style="grid-column: 1 / 4;">
-                <h3>📋 Recent Logs</h3>
-                <div class="log-container" id="logContainer">
-                    <div class="log-entry">Loading logs...</div>
+                <h3>📋 All Logs</h3>
+
+                <!-- Log Filters -->
+                <div class="log-filters">
+                    <div class="log-filter-group">
+                        <label for="levelFilter">Level:</label>
+                        <select id="levelFilter" onchange="filterLogs()">
+                            <option value="">All</option>
+                            <option value="ERROR">Error</option>
+                            <option value="WARN">Warning</option>
+                            <option value="INFO">Info</option>
+                            <option value="DEBUG">Debug</option>
+                            <option value="TRACE">Trace</option>
+                        </select>
+                    </div>
+                    <div class="log-filter-group">
+                        <label for="searchFilter">Search:</label>
+                        <input type="text" id="searchFilter" placeholder="Search in messages..." onkeyup="filterLogs()">
+                    </div>
+                    <button class="btn btn-warning" onclick="clearLogFilters()">Clear Filters</button>
                 </div>
-                <button class="btn" onclick="refreshLogs()">🔄 Refresh Logs</button>
+
+                <!-- Log Stats -->
+                <div class="log-stats" id="logStats">
+                    Loaded: <span id="loadedCount">0</span> logs |
+                    Total: <span id="totalCount">0</span> logs |
+                    <span id="hasMoreIndicator"></span>
+                </div>
+
+                <!-- Log Container -->
+                <div class="log-container" id="logContainer">
+                    <div class="log-loading">
+                        <div class="log-loading-spinner"></div>
+                        Loading logs...
+                    </div>
+                </div>
+
+                <!-- Control Buttons -->
+                <button class="btn load-more-btn" id="loadMoreBtn" onclick="loadMoreLogs()" style="display: none;">
+                    📋 Load More Logs
+                </button>
+                <button class="btn" onclick="refreshAllLogs()">🔄 Refresh All Logs</button>
             </div>
         </div>
     </div>
@@ -476,10 +580,23 @@
         let pollingInterval = null;
         let isConnected = false;
 
+        // Pagination state
+        let allLogs = [];
+        let currentPage = 0;
+        let hasMoreLogs = true;
+        let isLoadingLogs = false;
+        let logsPerPage = 50;
+        let totalLogsCount = 0;
+        let currentFilters = {
+            level: '',
+            search: ''
+        };
+
         // Initialize the page
         document.addEventListener('DOMContentLoaded', function() {
             refreshData();
             startPolling();
+            setupInfiniteScroll();
         });
 
         function startPolling() {
@@ -504,7 +621,7 @@
             await Promise.all([
                 refreshStatus(),
                 refreshConfig(),
-                refreshLogs()
+                refreshAllLogs()
             ]);
         }
 
@@ -558,6 +675,138 @@
             } catch (error) {
                 console.error('Failed to refresh logs:', error);
             }
+        }
+
+        // New paginated logs functions
+        async function refreshAllLogs() {
+            // Reset state and load first page
+            allLogs = [];
+            currentPage = 0;
+            hasMoreLogs = true;
+            totalLogsCount = 0;
+            await loadLogsPage(0, true);
+        }
+
+        async function loadLogsPage(page, clearExisting = false) {
+            if (isLoadingLogs) return;
+
+            isLoadingLogs = true;
+            updateLoadingState(true);
+
+            try {
+                const params = new URLSearchParams({
+                    page: page.toString(),
+                    limit: logsPerPage.toString()
+                });
+
+                if (currentFilters.level) {
+                    params.append('level_filter', currentFilters.level);
+                }
+
+                const response = await fetch(`/api/logs/paginated?${params}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const data = result.data;
+
+                    if (clearExisting) {
+                        allLogs = data.logs;
+                    } else {
+                        allLogs = allLogs.concat(data.logs);
+                    }
+
+                    hasMoreLogs = data.has_more;
+                    totalLogsCount = data.total_count;
+                    currentPage = page;
+
+                    updatePaginatedLogsDisplay();
+                    updateLogStats();
+                } else {
+                    console.error('Failed to load logs:', result.error);
+                    showAlert(result.error || 'Failed to load logs', 'danger');
+                }
+            } catch (error) {
+                console.error('Failed to load paginated logs:', error);
+                showAlert('Failed to load logs: ' + error.message, 'danger');
+            } finally {
+                isLoadingLogs = false;
+                updateLoadingState(false);
+            }
+        }
+
+        async function loadMoreLogs() {
+            if (hasMoreLogs && !isLoadingLogs) {
+                await loadLogsPage(currentPage + 1, false);
+            }
+        }
+
+        function setupInfiniteScroll() {
+            const container = document.getElementById('logContainer');
+
+            container.addEventListener('scroll', function() {
+                // Check if scrolled near bottom (within 100px)
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 100) {
+                    if (hasMoreLogs && !isLoadingLogs) {
+                        loadMoreLogs();
+                    }
+                }
+            });
+        }
+
+        function updateLoadingState(isLoading) {
+            const loadMoreBtn = document.getElementById('loadMoreBtn');
+
+            if (isLoading) {
+                loadMoreBtn.innerHTML = '<div class="log-loading-spinner"></div> Loading...';
+                loadMoreBtn.disabled = true;
+            } else {
+                loadMoreBtn.innerHTML = '📋 Load More Logs';
+                loadMoreBtn.disabled = false;
+                loadMoreBtn.style.display = hasMoreLogs ? 'block' : 'none';
+            }
+        }
+
+        function updateLogStats() {
+            document.getElementById('loadedCount').textContent = allLogs.length;
+            document.getElementById('totalCount').textContent = totalLogsCount;
+            document.getElementById('hasMoreIndicator').textContent =
+                hasMoreLogs ? 'More available' : 'All loaded';
+        }
+
+        function filterLogs() {
+            const levelFilter = document.getElementById('levelFilter').value;
+            const searchFilter = document.getElementById('searchFilter').value;
+
+            const previousLevelFilter = currentFilters.level;
+            currentFilters.level = levelFilter;
+            currentFilters.search = searchFilter;
+
+            // If level filter changed, reload data from server
+            if (levelFilter !== previousLevelFilter) {
+                console.log('Level filter changed, reloading data from server:', levelFilter);
+                refreshAllLogs();
+            } else {
+                // Only search filter changed, apply client-side filtering
+                console.log('Search filter changed, applying client-side filter:', searchFilter);
+                updatePaginatedLogsDisplay();
+            }
+        }
+
+        function clearLogFilters() {
+            console.log('Clearing all filters');
+
+            document.getElementById('levelFilter').value = '';
+            document.getElementById('searchFilter').value = '';
+
+            currentFilters.level = '';
+            currentFilters.search = '';
+
+            // Reload logs with cleared filters from server
+            refreshAllLogs();
         }
 
         function updateStatusDisplay(status) {
@@ -728,6 +977,143 @@
 
                 container.appendChild(entry);
             });
+        }
+
+        function updatePaginatedLogsDisplay() {
+            let logs = allLogs;
+
+            // Apply client-side level filter (for already loaded logs)
+            if (currentFilters.level && currentFilters.level.length > 0) {
+                logs = logs.filter(log => log.level.toUpperCase() === currentFilters.level.toUpperCase());
+            }
+
+            // Apply client-side search filter
+            if (currentFilters.search && currentFilters.search.trim().length > 0) {
+                const searchFilter = currentFilters.search.toLowerCase().trim();
+                logs = logs.filter(log => {
+                    return log.message.toLowerCase().includes(searchFilter) ||
+                        (log.module && log.module.toLowerCase().includes(searchFilter)) ||
+                        (log.correlation_id && log.correlation_id.toLowerCase().includes(searchFilter));
+                });
+            }
+
+            updateFilteredLogsDisplay(logs);
+        }
+
+        function updateFilteredLogsDisplay(logs) {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = '';
+
+            if (logs.length === 0) {
+                container.innerHTML = '<div class="log-entry">No logs match current filters</div>';
+                updateFilteredLogStats(0);
+                return;
+            }
+
+            logs.forEach((log, index) => {
+                const entry = createLogEntry(log, index);
+                container.appendChild(entry);
+            });
+
+            updateFilteredLogStats(logs.length);
+        }
+
+        function updateFilteredLogStats(filteredCount) {
+            const totalLoadedCount = allLogs.length;
+            document.getElementById('loadedCount').textContent = filteredCount;
+
+            // Show additional info if filtering is active
+            if (currentFilters.level || (currentFilters.search && currentFilters.search.trim().length > 0)) {
+                document.getElementById('loadedCount').textContent = `${filteredCount} (of ${totalLoadedCount})`;
+            } else {
+                document.getElementById('loadedCount').textContent = totalLoadedCount;
+            }
+        }
+
+        function createLogEntry(log, index) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.dataset.logIndex = index;
+
+            // Format timestamp for display
+            const timestamp = log.timestamp ?
+                new Date(log.timestamp).toLocaleString() : 'N/A';
+
+            // Create header with basic info
+            const header = document.createElement('div');
+            header.className = 'log-entry-header';
+            header.innerHTML = `
+                <div class="log-entry-main">
+                    <span class="log-timestamp">${timestamp}</span>
+                    <span class="log-level ${log.level || 'INFO'}">${log.level || 'INFO'}</span>
+                    <span class="log-message">${log.message || 'No message'}</span>
+                </div>
+                <span class="log-expand-arrow">▶</span>
+            `;
+
+            // Create details section
+            const details = document.createElement('div');
+            details.className = 'log-entry-details';
+
+            // Main log data section
+            const mainSection = document.createElement('div');
+            mainSection.className = 'log-details-section';
+            mainSection.innerHTML = `
+                <div class="log-details-title">📋 Full Log Entry</div>
+                <div class="log-details-content">${JSON.stringify(log, null, 2)}</div>
+            `;
+            details.appendChild(mainSection);
+
+            // Add specialized sections for specific fields
+            if (log.correlation_id) {
+                const correlationSection = document.createElement('div');
+                correlationSection.className = 'log-details-section';
+                correlationSection.innerHTML = `
+                    <div class="log-details-title">🔗 Correlation ID</div>
+                    <div class="log-details-content">${log.correlation_id}</div>
+                `;
+                details.appendChild(correlationSection);
+            }
+
+            if (log.context) {
+                const contextSection = document.createElement('div');
+                contextSection.className = 'log-details-section';
+                contextSection.innerHTML = `
+                    <div class="log-details-title">📊 Context Data</div>
+                    <div class="log-details-content">${JSON.stringify(log.context, null, 2)}</div>
+                `;
+                details.appendChild(contextSection);
+            }
+
+            if (log.module) {
+                const moduleSection = document.createElement('div');
+                moduleSection.className = 'log-details-section';
+                moduleSection.innerHTML = `
+                    <div class="log-details-title">📦 Module</div>
+                    <div class="log-details-content">${log.module}</div>
+                `;
+                details.appendChild(moduleSection);
+            }
+
+            if (log.thread_id || log.process_id) {
+                const threadSection = document.createElement('div');
+                threadSection.className = 'log-details-section';
+                threadSection.innerHTML = `
+                    <div class="log-details-title">🧵 Thread/Process Info</div>
+                    <div class="log-details-content">Thread: ${log.thread_id || 'N/A'} | Process: ${log.process_id || 'N/A'}</div>
+                `;
+                details.appendChild(threadSection);
+            }
+
+            entry.appendChild(header);
+            entry.appendChild(details);
+
+            // Add click handler for expansion
+            entry.addEventListener('click', () => {
+                entry.classList.toggle('expanded');
+            });
+
+            return entry;
         }
 
         async function toggleMonitoring() {
