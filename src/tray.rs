@@ -436,9 +436,14 @@ fn clear_tray_handlers() {
 fn pump_windows_messages() {
     unsafe {
         let mut msg = MSG::default();
-        while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+        // Limit message processing to avoid infinite loops
+        let mut count = 0;
+        const MAX_MESSAGES: u32 = 100;
+
+        while count < MAX_MESSAGES && PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
+            count += 1;
         }
     }
 }

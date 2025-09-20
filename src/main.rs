@@ -262,7 +262,7 @@ async fn monitor_temperatures_cycle(
             // Alert logged by notification system
 
             // Send notification directly (already in async context)
-            let _ = nm.send_temperature_alert(&hottest_sensor, max_temp, threshold).await;
+            let _ = nm.send_temperature_alert(&hottest_sensor, max_temp, threshold);
         }
     }
 
@@ -273,6 +273,7 @@ async fn monitor_temperatures_cycle(
 #[tracing::instrument]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
     // Initialize new logger service
     let logger_config = LoggerConfig {
         min_level: LogLevel::Info,
@@ -598,8 +599,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send startup notification
     notification_manager
-        .send_status_notification("GPU Temperature Monitor started")
-        .await?;
+        .send_status_notification("GPU Temperature Monitor started")?;
 
     // Send startup toast notification
     #[cfg(debug_assertions)]
@@ -795,8 +795,7 @@ async fn monitor_temperatures(
         log_temperature!(&hottest_sensor, max_temp, threshold);
 
         notification_manager
-            .send_temperature_alert(&hottest_sensor, max_temp, threshold)
-            .await?;
+            .send_temperature_alert(&hottest_sensor, max_temp, threshold)?;
     }
 
     Ok(())
