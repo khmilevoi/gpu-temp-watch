@@ -167,20 +167,43 @@ impl SystemTray {
     }
 
     fn load_icon_for_state(state: &IconState) -> Result<Icon, Box<dyn Error>> {
-        let icon_filename = match state {
-            IconState::Cool => "icons/thermometer-cool.ico",
-            IconState::Warm => "icons/thermometer-warm.ico",
-            IconState::Hot => "icons/thermometer-hot.ico",
+        let base_filename = match state {
+            IconState::Cool => "thermometer-cool",
+            IconState::Warm => "thermometer-warm",
+            IconState::Hot => "thermometer-hot",
         };
 
-        if std::path::Path::new(icon_filename).exists() {
-            match Icon::from_path(icon_filename, None) {
+        // In debug builds, try to load dev version with black background first
+        let icon_filename = if cfg!(debug_assertions) {
+            format!("icons/{}-dev.ico", base_filename)
+        } else {
+            format!("icons/{}.ico", base_filename)
+        };
+
+        if std::path::Path::new(&icon_filename).exists() {
+            match Icon::from_path(&icon_filename, None) {
                 Ok(icon) => {
                     log_debug!("Loaded icon", serde_json::json!({"icon": icon_filename}));
                     return Ok(icon);
                 }
                 Err(e) => {
                     log_warn!("Failed to load icon", serde_json::json!({"icon": icon_filename, "error": format!("{}", e)}));
+                }
+            }
+        }
+
+        // If dev icon failed to load in debug mode, try regular icon as fallback
+        if cfg!(debug_assertions) {
+            let fallback_filename = format!("icons/{}.ico", base_filename);
+            if std::path::Path::new(&fallback_filename).exists() {
+                match Icon::from_path(&fallback_filename, None) {
+                    Ok(icon) => {
+                        log_debug!("Loaded fallback icon", serde_json::json!({"icon": fallback_filename}));
+                        return Ok(icon);
+                    }
+                    Err(e) => {
+                        log_warn!("Failed to load fallback icon", serde_json::json!({"icon": fallback_filename, "error": format!("{}", e)}));
+                    }
                 }
             }
         }
@@ -216,18 +239,33 @@ impl SystemTray {
             IconState::Hot => [255, 0, 0, 255],
         };
 
+        // In debug builds, use black background instead of transparent
+        let background_color = if cfg!(debug_assertions) {
+            [0, 0, 0, 255] // Black background for dev builds
+        } else {
+            [0, 0, 0, 0] // Transparent background for release builds
+        };
+
         for y in 0..16 {
             for x in 0..16 {
                 let pixel = if x == 8 && y < 12 {
                     fill_color
                 } else if (x == 7 || x == 9) && y < 12 {
-                    [0, 0, 0, 255]
+                    if cfg!(debug_assertions) {
+                        [255, 255, 255, 255] // White outline for dev (contrast against black)
+                    } else {
+                        [0, 0, 0, 255] // Black outline for release
+                    }
                 } else if (6..=10).contains(&x) && (12..=14).contains(&y) {
                     fill_color
                 } else if (5..=11).contains(&x) && (11..=15).contains(&y) {
-                    [0, 0, 0, 255]
+                    if cfg!(debug_assertions) {
+                        [255, 255, 255, 255] // White outline for dev (contrast against black)
+                    } else {
+                        [0, 0, 0, 255] // Black outline for release
+                    }
                 } else {
-                    [0, 0, 0, 0]
+                    background_color
                 };
 
                 img.put_pixel(x, y, image::Rgba(pixel));

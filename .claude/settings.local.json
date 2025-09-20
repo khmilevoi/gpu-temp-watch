@@ -20,7 +20,8 @@
       "Bash(\"./target/release/gpu-temp-watch.exe\" --status)",
       "Bash(start:*)",
       "Bash(reg query:*)",
-      "Read(//c/Users/Khmil/OneDrive/Изображения/Screenshots/**)"
+      "Read(//c/Users/Khmil/OneDrive/Изображения/Screenshots/**)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

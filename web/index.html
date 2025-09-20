@@ -176,24 +176,141 @@
         }
 
         .log-entry {
+            margin-bottom: 8px;
+            padding: 8px;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .log-entry:hover {
+            background: #f5f5f5;
+            border-color: #ccc;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .log-entry.expanded {
+            background: #f8f9fa;
+            border-color: #667eea;
+        }
+
+        .log-entry-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .log-entry-main {
+            display: flex;
+            align-items: center;
+            flex: 1;
+        }
+
+        .log-expand-arrow {
+            margin-left: 10px;
+            font-size: 12px;
+            transition: transform 0.3s ease;
+            color: #666;
+        }
+
+        .log-entry.expanded .log-expand-arrow {
+            transform: rotate(90deg);
+        }
+
+        .log-entry-details {
+            margin-top: 12px;
+            padding: 12px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            display: none;
+            animation: slideDown 0.3s ease;
+        }
+
+        .log-entry.expanded .log-entry-details {
+            display: block;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                max-height: 0;
+                padding: 0 12px;
+            }
+            to {
+                opacity: 1;
+                max-height: 300px;
+                padding: 12px;
+            }
+        }
+
+        .log-details-section {
+            margin-bottom: 10px;
+        }
+
+        .log-details-title {
+            font-weight: bold;
+            color: #333;
             margin-bottom: 5px;
-            padding: 2px 0;
-            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+
+        .log-details-content {
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 3px;
+            padding: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 150px;
+            overflow-y: auto;
         }
 
         .log-timestamp {
             color: #666;
             margin-right: 10px;
+            font-size: 11px;
         }
 
         .log-level {
             font-weight: bold;
             margin-right: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            text-transform: uppercase;
         }
 
-        .log-level.INFO { color: #4CAF50; }
-        .log-level.WARN { color: #FF9800; }
-        .log-level.ERROR { color: #f44336; }
+        .log-level.INFO {
+            color: #fff;
+            background: #4CAF50;
+        }
+        .log-level.WARN {
+            color: #fff;
+            background: #FF9800;
+        }
+        .log-level.ERROR {
+            color: #fff;
+            background: #f44336;
+        }
+        .log-level.DEBUG {
+            color: #fff;
+            background: #2196F3;
+        }
+        .log-level.TRACE {
+            color: #fff;
+            background: #9E9E9E;
+        }
+
+        .log-message {
+            flex: 1;
+            color: #333;
+        }
 
         .stats-grid {
             display: grid;
@@ -343,7 +460,7 @@
             </div>
 
             <!-- Recent Logs -->
-            <div class="card">
+            <div class="card" style="grid-column: 1 / 4;">
                 <h3>📋 Recent Logs</h3>
                 <div class="log-container" id="logContainer">
                     <div class="log-entry">Loading logs...</div>
@@ -537,14 +654,78 @@
                 return;
             }
 
-            logs.slice(-20).reverse().forEach(log => {
+            logs.slice(-20).reverse().forEach((log, index) => {
                 const entry = document.createElement('div');
                 entry.className = 'log-entry';
-                entry.innerHTML = `
-                    <span class="log-timestamp">${log.timestamp}</span>
-                    <span class="log-level ${log.level}">${log.level}</span>
-                    <span class="log-message">${log.message}</span>
+                entry.dataset.logIndex = index;
+
+                // Create header with basic info
+                const header = document.createElement('div');
+                header.className = 'log-entry-header';
+                header.innerHTML = `
+                    <div class="log-entry-main">
+                        <span class="log-timestamp">${log.timestamp || 'N/A'}</span>
+                        <span class="log-level ${log.level || 'INFO'}">${log.level || 'INFO'}</span>
+                        <span class="log-message">${log.message || 'No message'}</span>
+                    </div>
+                    <span class="log-expand-arrow">▶</span>
                 `;
+
+                // Create details section
+                const details = document.createElement('div');
+                details.className = 'log-entry-details';
+
+                // Prepare full log data for display
+                const fullLogData = {
+                    timestamp: log.timestamp,
+                    level: log.level,
+                    message: log.message,
+                    ...log // Include any additional fields
+                };
+
+                // Remove undefined values for cleaner display
+                Object.keys(fullLogData).forEach(key => {
+                    if (fullLogData[key] === undefined) {
+                        delete fullLogData[key];
+                    }
+                });
+
+                details.innerHTML = `
+                    <div class="log-details-section">
+                        <div class="log-details-title">📋 Full Log Entry</div>
+                        <div class="log-details-content">${JSON.stringify(fullLogData, null, 2)}</div>
+                    </div>
+                `;
+
+                // Add additional sections if log has extra data
+                if (log.correlation_id) {
+                    const correlationSection = document.createElement('div');
+                    correlationSection.className = 'log-details-section';
+                    correlationSection.innerHTML = `
+                        <div class="log-details-title">🔗 Correlation ID</div>
+                        <div class="log-details-content">${log.correlation_id}</div>
+                    `;
+                    details.appendChild(correlationSection);
+                }
+
+                if (log.context || log.data) {
+                    const contextSection = document.createElement('div');
+                    contextSection.className = 'log-details-section';
+                    contextSection.innerHTML = `
+                        <div class="log-details-title">📊 Context Data</div>
+                        <div class="log-details-content">${JSON.stringify(log.context || log.data, null, 2)}</div>
+                    `;
+                    details.appendChild(contextSection);
+                }
+
+                entry.appendChild(header);
+                entry.appendChild(details);
+
+                // Add click handler for expansion
+                entry.addEventListener('click', () => {
+                    entry.classList.toggle('expanded');
+                });
+
                 container.appendChild(entry);
             });
         }

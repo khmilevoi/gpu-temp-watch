@@ -8,12 +8,21 @@ use std::fs;
 pub struct AppPaths;
 
 impl AppPaths {
-    /// Get the main application data directory: %LOCALAPPDATA%\GpuTempWatch
+    /// Get the main application data directory
+    /// Debug builds: ./AppData (in project directory)
+    /// Release builds: %LOCALAPPDATA%\GpuTempWatch
     pub fn get_app_data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let localappdata = std::env::var("LOCALAPPDATA")
-            .map_err(|_| "LOCALAPPDATA environment variable not found")?;
-
-        let app_dir = PathBuf::from(localappdata).join("GpuTempWatch");
+        let app_dir = if cfg!(debug_assertions) {
+            // For debug builds, use local AppData directory in project
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("AppData")
+        } else {
+            // For release builds, use system %LOCALAPPDATA%
+            let localappdata = std::env::var("LOCALAPPDATA")
+                .map_err(|_| "LOCALAPPDATA environment variable not found")?;
+            PathBuf::from(localappdata).join("GpuTempWatch")
+        };
 
         // Create directory if it doesn't exist
         if !app_dir.exists() {
@@ -23,19 +32,25 @@ impl AppPaths {
         Ok(app_dir)
     }
 
-    /// Get the configuration file path: %LOCALAPPDATA%\GpuTempWatch\config.json
+    /// Get the configuration file path
+    /// Debug builds: ./AppData/config.json
+    /// Release builds: %LOCALAPPDATA%\GpuTempWatch\config.json
     pub fn get_config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let app_dir = Self::get_app_data_dir()?;
         Ok(app_dir.join("config.json"))
     }
 
-    /// Get the log file path: %LOCALAPPDATA%\GpuTempWatch\gpu-temp-watch.log
+    /// Get the log file path
+    /// Debug builds: ./AppData/gpu-temp-watch.log
+    /// Release builds: %LOCALAPPDATA%\GpuTempWatch\gpu-temp-watch.log
     pub fn get_log_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let app_dir = Self::get_app_data_dir()?;
         Ok(app_dir.join("gpu-temp-watch.log"))
     }
 
-    /// Get the logs directory path: %LOCALAPPDATA%\GpuTempWatch\Logs
+    /// Get the logs directory path
+    /// Debug builds: ./AppData/Logs
+    /// Release builds: %LOCALAPPDATA%\GpuTempWatch\Logs
     /// (For backward compatibility with existing log structure)
     pub fn get_logs_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let app_dir = Self::get_app_data_dir()?;
@@ -49,7 +64,9 @@ impl AppPaths {
         Ok(logs_dir)
     }
 
-    /// Get the log file path in logs directory: %LOCALAPPDATA%\GpuTempWatch\Logs\gpu-temp-watch.log
+    /// Get the log file path in logs directory
+    /// Debug builds: ./AppData/Logs/gpu-temp-watch.log
+    /// Release builds: %LOCALAPPDATA%\GpuTempWatch\Logs\gpu-temp-watch.log
     pub fn get_log_file_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let logs_dir = Self::get_logs_dir()?;
         Ok(logs_dir.join("gpu-temp-watch.log"))
