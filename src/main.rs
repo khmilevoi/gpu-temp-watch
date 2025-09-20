@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_paths;
 mod autostart;
 mod config;
 mod gui;
@@ -10,6 +11,7 @@ mod notifications;
 mod tray;
 mod web_server;
 
+use app_paths::AppPaths;
 use autostart::{AutoStart, AutoStartStatus};
 use config::Config;
 use gui::GuiManager;
@@ -65,10 +67,8 @@ async fn handle_tray_events(
                 }
                 TrayMessage::ViewLogs => {
                     log_info!("📋 View logs clicked");
-                    let log_path = std::env::current_dir()
-                        .unwrap_or_default()
-                        .join("Logs")
-                        .join("gpu-temp-watch.log");
+                    let log_path = AppPaths::get_log_file_path()
+                        .unwrap_or_else(|_| AppPaths::get_fallback_log_path());
 
                     // Ensure log file exists before trying to open
                     if !log_path.exists() {
@@ -86,9 +86,8 @@ async fn handle_tray_events(
                 }
                 TrayMessage::EditSettings => {
                     log_info!("⚙️ Edit settings clicked");
-                    let config_path = std::env::current_dir()
-                        .unwrap_or_default()
-                        .join("config.json");
+                    let config_path = AppPaths::get_config_path()
+                        .unwrap_or_else(|_| AppPaths::get_fallback_config_path());
 
                     tokio::spawn(async move {
                         if let Err(e) = crate::gui::GuiDialogs::open_file(&config_path.to_string_lossy()) {
@@ -280,7 +279,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output: LogOutput::Both,
         console_format: LogFormat::Human,
         file_format: LogFormat::Json,
-        file_path: Some(std::path::PathBuf::from("./Logs/gpu-temp-watch.log")),
+        file_path: Some(
+            AppPaths::get_log_file_path()
+                .unwrap_or_else(|_| AppPaths::get_fallback_log_path())
+        ),
         max_file_size: Some(10 * 1024 * 1024), // 10MB
         max_files: Some(5),
         colored_output: true,
@@ -820,6 +822,10 @@ fn print_help() {
     log_info!("    gpu-temp-watch.exe --startup-test     # Test startup components");
     log_info!("");
     log_info!("The application will run in system tray and monitor GPU temperatures.");
-    log_info!("Configuration file: ./config.json");
-    log_info!("Log files: ./Logs/gpu-temp-watch.log");
+    let config_path = AppPaths::get_config_path()
+        .unwrap_or_else(|_| AppPaths::get_fallback_config_path());
+    let log_path = AppPaths::get_log_file_path()
+        .unwrap_or_else(|_| AppPaths::get_fallback_log_path());
+    log_info!(&format!("Configuration file: {}", config_path.display()));
+    log_info!(&format!("Log files: {}", log_path.display()));
 }

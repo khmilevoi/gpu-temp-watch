@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use crate::{log_info, log_error, log_warn};
+use crate::app_paths::AppPaths;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -19,7 +20,12 @@ impl Default for Config {
             poll_interval_sec: 20,
             base_cooldown_sec: 20,
             enable_logging: true,
-            log_file_path: Some("./Logs/gpu-temp-watch.log".to_string()),
+            log_file_path: Some(
+                AppPaths::get_log_file_path()
+                    .unwrap_or_else(|_| AppPaths::get_fallback_log_path())
+                    .to_string_lossy()
+                    .to_string()
+            ),
         }
     }
 }
@@ -111,12 +117,9 @@ impl Config {
     }
 
     fn get_config_path() -> PathBuf {
-        // Use absolute path to avoid working directory issues
-        if let Ok(current_dir) = std::env::current_dir() {
-            current_dir.join("config.json")
-        } else {
-            PathBuf::from("./config.json")
-        }
+        // Use %LOCALAPPDATA%\GpuTempWatch path, fallback to current directory
+        AppPaths::get_config_path()
+            .unwrap_or_else(|_| AppPaths::get_fallback_config_path())
     }
 
     pub fn update_threshold(

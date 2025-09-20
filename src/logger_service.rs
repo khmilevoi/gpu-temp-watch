@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::SystemTime;
+use crate::app_paths::AppPaths;
 
 /// Уровни логирования в порядке важности
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -172,7 +173,10 @@ impl Default for LoggerConfig {
             output: LogOutput::Both,
             console_format: LogFormat::Human,
             file_format: LogFormat::Json,
-            file_path: Some(PathBuf::from("./Logs/gpu-temp-watch.log")),
+            file_path: Some(
+                AppPaths::get_log_file_path()
+                    .unwrap_or_else(|_| AppPaths::get_fallback_log_path())
+            ),
             max_file_size: Some(10 * 1024 * 1024), // 10MB
             max_files: Some(5),
             colored_output: true,

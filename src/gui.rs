@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use crate::{log_info, log_error, log_warn, log_debug};
+use crate::app_paths::AppPaths;
 
 use windows::{
     core::PCWSTR,
@@ -164,13 +165,18 @@ impl GuiDialogs {
 
     /// Show settings dialog (simplified version)
     pub fn show_settings_info(current_threshold: f32, current_interval: u64) {
+        let config_path = AppPaths::get_config_path()
+            .unwrap_or_else(|_| AppPaths::get_fallback_config_path());
+        let log_path = AppPaths::get_log_file_path()
+            .unwrap_or_else(|_| AppPaths::get_fallback_log_path());
+
         let settings_text = format!(
             "⚙️ GPU Temperature Monitor Settings\n\n\
             📊 Current Configuration:\n\
             • 🌡️ Temperature Threshold: {:.1}°C\n\
             • ⏱️ Poll Interval: {} seconds\n\
-            • 📂 Config File: ./config.json\n\
-            • 📋 Log File: ./Logs/gpu-temp-watch.log\n\n\
+            • 📂 Config File: {}\n\
+            • 📋 Log File: {}\n\n\
             🔧 How to Change Settings:\n\
             1. Click 'Open Config File' from the tray menu\n\
             2. Edit the values in config.json\n\
@@ -181,7 +187,7 @@ impl GuiDialogs {
             • base_cooldown_sec: Notification cooldown (1-600s)\n\
             • enable_logging: Enable/disable file logging\n\
             • log_file_path: Log file location",
-            current_threshold, current_interval
+            current_threshold, current_interval, config_path.display(), log_path.display()
         );
 
         Self::show_info("Settings", &settings_text);

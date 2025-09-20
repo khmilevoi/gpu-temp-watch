@@ -14,7 +14,7 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 - **System Tray**: Native Windows system tray icon with dynamic color-coded temperature icons and context menu
 - **Web Interface**: Modern web-based configuration and monitoring interface on localhost:18235
 - **Toast Notifications**: Windows native toast notifications with smart exponential backoff cooldown
-- **Unified Logging**: New LoggerService providing both console and file logging with JSON structured format, correlation IDs, and automatic rotation to `./Logs/gpu-temp-watch.log`
+- **Unified Logging**: New LoggerService providing both console and file logging with JSON structured format, correlation IDs, and automatic rotation to `%LOCALAPPDATA%\GpuTempWatch\Logs\gpu-temp-watch.log`
 - **Autostart Management**: Automatic Windows startup integration via registry
 - **Configuration**: JSON-based configuration with real-time web updates
 
@@ -28,6 +28,7 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 - `web_server.rs`: HTTP server with REST API and WebSocket support for real-time monitoring
 - `autostart.rs`: Windows registry integration for startup management
 - `gui.rs`: Native Windows dialogs and file operations
+- `app_paths.rs`: Centralized application path management using %LOCALAPPDATA%
 
 ### Configuration
 
@@ -35,7 +36,17 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 - `poll_interval_sec`: Polling interval in seconds (default: 20)
 - `base_cooldown_sec`: Base cooldown between notifications (default: 20)
 - `enable_logging`: Enable/disable file logging (default: true)
-- `log_file_path`: Path to log file (default: "./Logs/gpu-temp-watch.log")
+- `log_file_path`: Path to log file (default: "%LOCALAPPDATA%\\GpuTempWatch\\Logs\\gpu-temp-watch.log")
+
+### Application Data Storage
+
+The application follows Windows standards for data storage:
+
+- **Configuration**: `%LOCALAPPDATA%\GpuTempWatch\config.json`
+- **Logs**: `%LOCALAPPDATA%\GpuTempWatch\Logs\gpu-temp-watch.log`
+- **Fallback**: Current working directory (for compatibility)
+
+All paths are managed centrally through the `AppPaths` module, ensuring consistent behavior across the application.
 
 ## Development Commands
 
@@ -96,13 +107,13 @@ The application uses a unified LoggerService that provides:
 #### Log Monitoring
 ```bash
 # Monitor log in real-time (Windows)
-Get-Content ".\Logs\gpu-temp-watch.log" -Wait -Tail 10
+Get-Content "$env:LOCALAPPDATA\GpuTempWatch\Logs\gpu-temp-watch.log" -Wait -Tail 10
 
 # View recent log entries
-Get-Content ".\Logs\gpu-temp-watch.log" -Tail 20
+Get-Content "$env:LOCALAPPDATA\GpuTempWatch\Logs\gpu-temp-watch.log" -Tail 20
 
 # Open logs directory
-explorer Logs\
+explorer "$env:LOCALAPPDATA\GpuTempWatch\Logs"
 ```
 
 #### Usage Examples
