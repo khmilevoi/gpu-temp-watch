@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures using NVIDIA Management Library (NVML). The application provides real-time temperature monitoring with system tray integration, Windows toast notifications, web-based configuration interface, and comprehensive file logging.
+GpuTempWatch is a production-ready lightweight Rust application for monitoring GPU temperatures using NVIDIA Management Library (NVML). The application provides real-time temperature monitoring with system tray integration, Windows toast notifications, web-based configuration interface, and comprehensive logging.
+
+**Current Status**: ✅ **Production Ready** - Fully functional with complete feature set, comprehensive documentation, and testing.
 
 ## Architecture
 
@@ -32,11 +34,43 @@ GpuTempWatch is a lightweight Rust application for monitoring GPU temperatures u
 
 ### Configuration
 
-- `temperature_threshold_c`: Temperature threshold in Celsius (default: 60°C)
+- `temperature_threshold_c`: Temperature threshold in Celsius (default: 80°C)
 - `poll_interval_sec`: Polling interval in seconds (default: 20)
 - `base_cooldown_sec`: Base cooldown between notifications (default: 20)
 - `enable_logging`: Enable/disable file logging (default: true)
 - `log_file_path`: Path to log file (default: "%LOCALAPPDATA%\\GpuTempWatch\\Logs\\gpu-temp-watch.log")
+
+### Project Structure
+
+```
+GpuTempWatch/
+├── src/
+│   ├── main.rs                 # Application entry point and main loop
+│   ├── app_paths.rs           # Centralized path management (%LOCALAPPDATA%)
+│   ├── config.rs              # JSON configuration management
+│   ├── monitor.rs             # NVML GPU temperature monitoring
+│   ├── tray.rs                # System tray integration with color icons
+│   ├── notifications.rs       # Windows toast notifications with backoff
+│   ├── logger_service.rs      # Unified console/file logging service
+│   ├── web_server.rs          # HTTP/WebSocket server for web interface
+│   ├── autostart.rs           # Windows registry autostart management
+│   └── gui.rs                 # Native Windows dialogs
+├── web/
+│   └── index.html             # Modern web dashboard interface
+├── icons/
+│   ├── icon.ico               # Main application icon
+│   ├── thermometer-cool.ico   # Green tray icon (below threshold)
+│   ├── thermometer-warm.ico   # Yellow tray icon (approaching threshold)
+│   └── thermometer-hot.ico    # Red tray icon (above threshold)
+├── docs/
+│   ├── web-interface.png      # Web dashboard screenshot
+│   └── tray-menu.png          # System tray menu screenshot
+├── Cargo.toml                 # Rust dependencies and build configuration
+├── README.md                  # Complete user documentation
+├── CLAUDE.md                  # Development guidance (this file)
+├── config.json               # Runtime configuration file
+└── Logs/                      # Application logs directory
+```
 
 ### Application Data Storage
 
@@ -142,16 +176,32 @@ The application uses native Windows toast notifications with smart cooldown:
 - **Continuous monitoring**: Always logs temperature status every polling cycle
 
 ### System Tray Features
-- 🟢🟡🔴 Color-coded temperature indication (planned)
-- Right-click context menu with controls
-- Pause/resume monitoring
-- Settings access
-- Quick log access
-- Exit option
+- 🟢🟡🔴 **Color-coded temperature indication** (✅ Implemented)
+  - Green: Below threshold (cool)
+  - Yellow: Approaching threshold (warm)
+  - Red: Above threshold (hot)
+- **Right-click context menu** with controls:
+  - Open Dashboard (web interface)
+  - View Logs (file explorer)
+  - Edit Settings (quick config)
+  - Quit Monitor
+- **Double-click**: Opens web dashboard
+- **Hover tooltip**: Shows current temperature
 
-## Performance Benefits
+## Production Status & Features
 
-### Rust vs PowerShell Implementation
+### ✅ Completed Features
+- **Real-time GPU monitoring** with NVML integration
+- **System tray integration** with color-coded temperature icons
+- **Web dashboard** on localhost:18235 with real-time updates
+- **Smart toast notifications** with exponential backoff (20s→40s→80s→160s→320s)
+- **Comprehensive logging** with JSON structured format and rotation
+- **Live configuration updates** via web interface
+- **Windows autostart integration** via registry
+- **Complete documentation** with screenshots and usage guide
+- **Professional file structure** with docs/ directory
+
+### Performance Benefits (Rust vs PowerShell)
 - ✅ **Memory Usage**: <2MB vs 20MB+ (PowerShell)
 - ✅ **Startup Time**: Instant vs several seconds
 - ✅ **Resource Efficiency**: Minimal CPU usage
@@ -160,10 +210,27 @@ The application uses native Windows toast notifications with smart cooldown:
 - ✅ **Reliability**: No execution policy issues
 - ✅ **Size**: 1.2MB executable vs multiple script files
 
-## Claude Code Environment
+## Documentation & Support
+
+### Available Documentation
+- **README.md**: Complete user guide with installation, usage, and troubleshooting
+- **docs/web-interface.png**: Screenshot of web dashboard showing all features
+- **docs/tray-menu.png**: Screenshot of system tray context menu
+- **CLAUDE.md**: This development guidance file
+
+### Web Interface Features
+The web dashboard (localhost:18235) provides:
+- **Real-time temperature display** with threshold indicator
+- **Status badges**: Active, Temperature State, Autostart, GPU Connection
+- **Control panel**: Pause/Resume, Toggle Autostart, Manual Refresh
+- **Live configuration**: Temperature threshold, polling interval, cooldown, logging
+- **Recent logs viewer** with automatic updates
+- **Responsive design** with modern UI/UX
+
+## Development Environment
 This project was developed and migrated from PowerShell to Rust with Claude Code:
 - **Model**: Sonnet 4 (claude-sonnet-4-20250514)
 - **Platform**: Windows (win32)
 - **Working Directory**: C:\Users\Khmil\Scripts\GpuTempWatch
 - **Date**: September 2025
-- **Migration**: Complete replacement of PowerShell implementation with native Rust
+- **Status**: ✅ **Production Ready** - Migration complete with full feature parity and enhancements
